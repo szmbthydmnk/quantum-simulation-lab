@@ -103,7 +103,7 @@ class MPS:
         return MPS([t.copy() for t in self.tensors])
         
     @classmethod
-    def from_product_state(cls, state_indices: List[int], physical_dim: int = 2) -> 'MPS':
+    def from_product_state(cls, state_indices: List[int], physical_dims: int = 2) -> 'MPS':
         """
         Create an MPS from a product state.
 
@@ -124,7 +124,7 @@ class MPS:
         
         for idx in state_indices:
             
-            tensor_data = np.zeros((1, physical_dim, 1), dtype = np.complex128)
+            tensor_data = np.zeros((1, physical_dims, 1), dtype = np.complex128)
             tensor_data[0, idx, 0] = 1.0
             tensors.append(Tensor(tensor_data))
         return cls(tensors)

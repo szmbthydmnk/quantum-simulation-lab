@@ -3,6 +3,7 @@
 import numpy as np
 from typing import List
 from .tensor import Tensor
+from .mps import MPS
 
 class MPO:
     """
@@ -70,3 +71,40 @@ class MPO:
             tensors.append(Tensor(data))
         
         return cls(tensors)
+    
+    def apply(self, mps: MPS) -> 'MPS':
+        """
+        Apply this MPO to an MPS: returns a new MPS representing: $$\hat{O}\ket{\Psi}$$
+        
+        Requires identical physical dimension
+        """
+        
+        if len(self) != len(mps):
+            raise ValueError(f"Length mismatch: MPO has {len(self)} sites, MPS has {len(mps)} sites")
+        
+        if self.physical_dims != mps.physical_dims:
+            raise ValueError(f"Physical dimension mismatch: MPO has physical dimension {self.physical_dims} while the MPS has {mps.physical_dims} physical dimension.")
+        
+        new_tensors = []
+        
+        # Using Schölwock's notation here for readability:
+        for W, M in zip(self.tensors, mps.tensors):
+            w_left, d_in, d_out, w_right = W.shape
+            m_left, d_mps, m_right = M.shape
+            
+            if d_in != d_mps:
+                raise ValueError("Local physical dimension mismatch between MPO ({d_in}) and MPS ({d_mps})")
+            
+            temp = np.tensordot(W.data, M.data, axes = ([1], [1]))  # The shape here is (w_left, d_out, w_right, m_left, m_right)
+            
+            temp = np.transpose(temp,(0, 3, 1, 2, 4))   # Reorder the indices to match the convention (w_left, m_left, d_out, w_right, m_right)
+            
+            # Contract w_left, m_left and w_right, m_right -> "Superindices"
+            m_super_left = w_left * m_left
+            m_super_right = w_right * m_right
+            
+            new_data = temp.reshape(m_super_left, d_out, m_super_right)
+            
+            new_tensors.append(Tensor(new_data))
+            
+        return MPS(new_tensors)
