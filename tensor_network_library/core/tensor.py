@@ -46,11 +46,11 @@ class Tensor:
 
     def copy(self) -> 'Tensor':
         """Create a deep copy of the tensor"""
-        return Tensor(self.data.copy())
+        return Tensor(self.data.copy(), physical_indices=self.physical_indices.copy(), bond_indices=self.bond_indices.copy())
     
     def conj(self) -> 'Tensor':
         """Return the complex conugate of the tensor"""
-        return Tensor(np.conj(self.data))
+        return Tensor(np.conj(self.data), physical_indices=self.physical_indices.copy(), bond_indices=self.bond_indices.copy())
     
     def contract(self, other: 'Tensor', axes: Tuple[List[int], List[int]]) -> 'Tensor':
         """
