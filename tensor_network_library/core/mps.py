@@ -32,7 +32,14 @@ class MPS:
         
         # Validate dimensions:
         for i in range(self.num_sites - 1):
-            assert tensors[i].shape[2] == tensors[i + 1].shape[0], f"Bond dimension mismatch at site {i}: {tensors[i].shape[2]}  != {tensors[i + 1].shape[0]}"
+            if tensors[i].shape[2] == tensors[i + 1].shape[0]:
+                raise ValueError(
+                    f"Bond dimension mismatch at site {i}: "
+                    f"{tensors[i].shape[2]} != {tensors[i + 1].shape[0]}"
+                )
+            
+            
+            # assert tensors[i].shape[2] == tensors[i + 1].shape[0], f"Bond dimension mismatch at site {i}: {tensors[i].shape[2]} != {tensors[i + 1].shape[0]}"
                 
     def __len__(self):
         return len(self.tensors)
@@ -96,7 +103,7 @@ class MPS:
         return MPS([t.copy() for t in self.tensors])
         
     @classmethod
-    def mps_from_product_state(state_indices: List[int], physical_dim: int = 2) -> MPS:
+    def mps_from_product_state(cls, state_indices: List[int], physical_dim: int = 2) -> 'MPS':
         """
         Create an MPS from a product state.
 
@@ -120,4 +127,4 @@ class MPS:
             tensor_data = np.zeros((1, physical_dim, 1), dtype = np.complex128)
             tensor_data[0, idx, 0] = 1.0
             tensors.append(Tensor(tensor_data))
-        return MPS(tensors)
+        return cls(tensors)
