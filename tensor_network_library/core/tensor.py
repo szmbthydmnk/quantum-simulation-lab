@@ -114,6 +114,14 @@ class Tensor:
                       physical_indices=self.physical_indices.copy(),
                       bond_indices=self.bond_indices.copy())
 
+    def __mul__(self, scalar: complex) -> 'Tensor':
+        """left scalar multiplication"""
+        return Tensor(self.data * scalar)
+    
+    def __rmul__(self, scalar: complex) -> 'Tensor':
+        """Right scalar multiplication"""
+        return self.__mul__(scalar)
+    
     def einsum(self, subscripts: str, *others: "Tensor") -> "Tensor":
         arrays = [self.data] + [t.data for t in others]
         out = np.einsum(subscripts, *arrays)
