@@ -1,11 +1,10 @@
 from __future__ import annotations  # Postpone evaluation of type hints (allows forward references, avoids circular imports)
 
-#from dataclasses import dataclass   # automatically generates __init__; __repr__ and so on.
+
 from typing import Tuple, Optional, List
-#from typing import Any
 import numpy as np
 from numpy.typing import NDArray
-
+from scipy.linalg import svd, qr, eigh
 ComplexArray = NDArray[np.complex128]
 
 
@@ -14,9 +13,9 @@ class Tensor:
     A multi dimensional array wrapper with tensor network operations
     
     Attributes:
-    data (np.ndarray): The underlying numpy array.
-    shape (tuple): Shape/dimensions of the tensor.
-    ndim (int): Number of dimensions.
+        data (np.ndarray): The underlying numpy array.
+        shape (tuple): Shape/dimensions of the tensor.
+        ndim (int): Number of dimensions.
     """
 
     def __init__(self, 
@@ -45,6 +44,33 @@ class Tensor:
         """Return number of dimensions"""
         return self.data.ndim
 
+    def copy(self) -> 'Tensor':
+        """Create a deep copy of the tensor"""
+        return Tensor(self.data.copy())
+    
+    def conj(self) -> 'Tensor':
+        """Return the complex conugate of the tensor"""
+        return Tensor(np.conj(self.data))
+    
+    def contract(self, other: 'Tensor', axes: Tuple[List[int], List[int]]) -> 'Tensor':
+        """
+        Contract two tensors along specified axis
+        
+        Args:
+            other: Tensor to contract with.
+            axes: Tuple of two lists specifying axes to contract.
+                    axes[0] are axes from self and axes[1] are axes from other.
+        
+        Returns:
+            Contracted 'Tensor'
+        
+        Example:
+            >>> a = Tensor(np.random.randn(2, 3, 4))
+            >>> b = Tensor(np.random.randn(4, 5))
+            >>> c = a.contract(b, ([2], [0]))  # Contract last axis of a with first of b 
+        """
+        
+        return Tensor(np.tensordot(self.data, other.data, axes=axes))
 
     def reshape(self, new_shape: Tuple[int, ...]) -> 'Tensor':
         """
