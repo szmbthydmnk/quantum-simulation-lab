@@ -142,6 +142,7 @@ class Tensor:
                           physical_indices=self.physical_indices.copy(), 
                           bond_indices=self.bond_indices.copy())
         R_tensor = Tensor(R.reshape(R_shape))
+        
         return Q_tensor, R_tensor
     
     def norm(self) -> float:
