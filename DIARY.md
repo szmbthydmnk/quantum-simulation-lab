@@ -1,5 +1,13 @@
 # Development Diary
 
+## 2026-02-20
+
+- Extended MPS canonicalization layer with left-canonical sweep using QR-based decomposition.
+- Added canonicalization tests checking state preservation and left-orthonormality.
+- Prepared infrastructure for future SVD-based truncation and right-canonicalization (design and API adjustments).
+- Bumped core version to `v0.1.2` for this development snapshot.
+
+  
 ## 2026-02-19 / 2026-02-20
 
 - Set up `tensor_network_library` as a Python package with `pyproject.toml` and editable install.
@@ -23,9 +31,4 @@
 - Configured GitHub Actions CI (`.github/workflows/tests.yml`) to run `pytest` on pushes and PRs.
 - Created `core_development` branch and merged the initial core TN layer into `main` via PR #1.
 
-## 2026-02-20
 
-- Extended MPS canonicalization layer with left-canonical sweep using QR-based decomposition.
-- Added canonicalization tests checking state preservation and left-orthonormality.
-- Prepared infrastructure for future SVD-based truncation and right-canonicalization (design and API adjustments).
-- Bumped core version to `v0.1.2` for this development snapshot.
