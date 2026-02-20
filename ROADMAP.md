@@ -8,6 +8,9 @@
 - [x] `MPO` class with identity, apply-to-MPS, and dense conversion.
 - [x] Unit tests for Tensor, MPS, and MPO.
 - [x] GitHub Actions CI running `pytest` on pushes and PRs.
+- [ ] Add left- right- and mied canonicalizations.
+- [x] QR decompositionmethod in tensor.
+- [ ] SVD decomposition with options for the environment.
 
 ## v0.2 – State helpers and environments
 
