@@ -9,7 +9,7 @@ class MPS:
     Matrix Product State (MPS) representation.
     
     An MPS represents a quantum state as a chain of tensors:
-    |ψ⟩ = Σ A[0]^{s0} A[1]^{s1} ... A[L-1]^{s(L-1)} |s0,s1,...,s(L-1)⟩
+    $$\ket{\Psi} = \sum A[1]^{s1} ... A[L-1]^{s(L-1)} \ket{s0,s1,...,s(L-1)}$$
     
     Attributes:
         tensors (List[Tensor]): List of MPS tensors. Each tensor has shape (χ_left, d, χ_right)
@@ -105,7 +105,7 @@ class MPS:
     @classmethod
     def from_product_state(cls, state_indices: List[int], physical_dims: int = 2) -> 'MPS':
         """
-        Create an MPS from a product state.
+        Create an MPS from a product state of computational basis states.
 
         Args:
             state_indices: List of local state indices (0 to physical_dim-1) for each site.
@@ -129,9 +129,22 @@ class MPS:
             tensors.append(Tensor(tensor_data))
         return cls(tensors)
     
+    @classmethod
+    def from_local_states(cls, local_states: List[int]) -> 'MPS':
+        """
+        Creates a product MPS state from local states, not limited to the computational basis.
+        
+        Args:
+            local_states[i]: 
+        Returns:
+        
+        Example(s):
+        """
+        
+    
     def to_dense(self) -> np.ndarray:
         """
-        Convert the MPS to a full statevector $$\ket{\Psi}$$ as a 1D array of length d^N.
+        Convert the MPS to a full statevector $$\ket{\Psi}$$ as a 1D array of length $$d^N$$.
         
         This helper function is intended for small systems and mostly for error correction/checks.
         """
