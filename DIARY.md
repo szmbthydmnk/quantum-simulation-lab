@@ -1,6 +1,6 @@
 # Development Diary
 
-## 2026-02-20
+## 2026-02-20 -- v0.1.2
 
 - Extended MPS canonicalization layer with left-canonical sweep using QR-based decomposition.
 - Added canonicalization tests checking state preservation and left-orthonormality.
