@@ -5,6 +5,7 @@ from typing import Tuple, Optional, List
 import numpy as np
 from numpy.typing import NDArray
 from scipy.linalg import svd, qr, eigh
+
 ComplexArray = NDArray[np.complex128]
 
 
@@ -122,11 +123,12 @@ class Tensor:
         """Right scalar multiplication"""
         return self.__mul__(scalar)
     
+    def __repr__(self):
+        return f"Tensor(shape={self.shape})"
+    
     def einsum(self, subscripts: str, *others: "Tensor") -> "Tensor":
         arrays = [self.data] + [t.data for t in others]
         out = np.einsum(subscripts, *arrays)
         return Tensor(out)
          
     
-    def __repr__(self):
-        return f"Tensor(shape={self.shape})"

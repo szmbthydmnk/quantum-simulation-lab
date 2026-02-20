@@ -108,3 +108,53 @@ class MPO:
             new_tensors.append(Tensor(new_data))
             
         return MPS(new_tensors)
+
+    def to_dense(self) -> np.ndarray:
+        """
+        Convert the MPO to a full operator matrix O of shape (d^N, d^N).
+
+        Contracts all internal bond indices and arranges physical indices
+        in the order (s0_in,...,sN-1_in, s0_out,...,sN-1_out), then reshapes.
+        Intended for small N for debugging.
+        """
+        N = self.num_sites
+        dims = self.physical_dims
+        # assume all dims equal for now
+        d = dims[0]
+
+        # Start from first tensor: W0 (wL0, d_in0, d_out0, wR0)
+        op = self.tensors[0].data  # shape (wL, d_in, d_out, wR)
+
+        # Sequentially contract bond indices across sites
+        for t in self.tensors[1:]:
+            W_next = t.data  # (wL_next, d_in_next, d_out_next, wR_next)
+
+            # Contract right bond of op with left bond of next tensor
+            # op: (..., wR), W_next: (wL_next, d_in_next, d_out_next, wR_next)
+            # We contract op's last axis with W_next's first axis.
+            op = np.tensordot(op, W_next, axes=([-1], [0]))
+            # After this, op has shape:
+            # (wL0, d_in0, d_out0, ..., d_in_k, d_out_k, wR_k)
+
+        # Now all bonds are contracted into a single op tensor of rank 2N (plus maybe 2 boundary bonds of dim 1)
+        # Remove any singleton bond dimensions
+        op = np.squeeze(op)
+
+        # We need to know where the d_in and d_out indices are.
+        # For N sites, they appear as alternating (d_in0, d_out0, d_in1, d_out1, ..., d_inN-1, d_outN-1)
+
+        # Build a permutation that takes us from [d_in0, d_out0, d_in1, d_out1, ...]
+        # to [d_in0,...,d_inN-1, d_out0,...,d_outN-1]
+        axes = list(range(op.ndim))  # something like [0,1,2,3,...] with only physical dims now
+        # We assume there are exactly 2N dimensions and they are in the pattern d_in0,d_out0,...
+
+        # in_positions = [0, 2, 4, ...], out_positions = [1, 3, 5, ...]
+        in_axes = axes[0::2]
+        out_axes = axes[1::2]
+        perm = in_axes + out_axes
+
+        op_perm = np.transpose(op, perm)
+
+        dim = d ** N
+        return op_perm.reshape(dim, dim)
+        
