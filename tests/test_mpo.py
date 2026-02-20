@@ -37,3 +37,24 @@ def test_identity_mpo_applies_as_identity_on_mps():
     psi_new = to_statevector(new_mps)
 
     assert np.allclose(psi_original, psi_new)
+    
+def test_mpo_apply_matches_dense():
+    L = 3
+    d = 2
+    state = [1, 1, 0]
+
+    mps = MPS.from_product_state(state, physical_dims = d)
+    mpo = MPO.identity(L, physical_dims = d)  # later you can plug in nontrivial MPO
+
+    # Apply with your TN code
+    mps2 = mpo.apply(mps)
+
+    # Dense reference
+    psi = mps.to_dense()
+    O = mpo.to_dense()
+    psi2_dense = O @ psi
+
+    # Compare to dense version of mps2
+    psi2_from_mps = mps2.to_dense()
+
+    assert np.allclose(psi2_dense, psi2_from_mps)
