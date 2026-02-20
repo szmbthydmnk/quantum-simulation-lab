@@ -102,6 +102,48 @@ class Tensor:
                       bond_indices=self.bond_indices.copy()
                       )
     
+    def qr_decomposition(self, left_indices: List[int], right_indices: List[int]) -> Tuple['Tensor', 'Tensor']:
+        """
+        Performs a QR decomposition on the data of the underlying tensor of other strcutures.
+        
+        Arguments:
+            left_indices:
+            right_indices:
+            
+        Returns:
+            Tuple of (Q, R) tensors
+            
+        Algorithm:
+            1. Group and reshape into matrix
+            2. Perfor QR decomposition
+            3. Reshape back to tensor form
+        """
+        
+        # Verify indices:
+        all_indices = set(left_indices + right_indices)
+        assert all_indices == set(range(self.ndim))
+        
+        perm = left_indices + right_indices
+        data_perm = np.transpose(self.data, perm)
+        
+        left_dim = int(np.prod([self.shape[i] for i in left_indices]))
+        right_dim = int(np.prod([self.shape[i] for i in right_indices]))
+        
+        mat = data_perm.reshape(left_dim, right_dim)
+        
+        Q, R = qr(mat, mode="full")
+        
+        chi = Q.shape[1]
+        Q_shape = tuple([self.shape[i] for i in left_indices]) + (chi,)
+        R_shape = (chi,) + tuple([self.shape[i] for i in right_indices])
+        
+        # Robustness addition:
+        Q_tensor = Tensor(Q.reshape(Q_shape), 
+                          physical_indices=self.physical_indices.copy(), 
+                          bond_indices=self.bond_indices.copy())
+        R_tensor = Tensor(R.reshape(R_shape))
+        return Q_tensor, R_tensor
+    
     def norm(self) -> float:
         """Returns the Frobenius norm."""
         return float(np.linalg.norm(self.data))
