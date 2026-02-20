@@ -128,3 +128,26 @@ class MPS:
             tensor_data[0, idx, 0] = 1.0
             tensors.append(Tensor(tensor_data))
         return cls(tensors)
+    
+    def to_dense(self) -> np.ndarray:
+        """
+        Convert the MPS to a full statevector $$\ket{\Psi}$$ as a 1D array of length d^N.
+        
+        This helper function is intended for small systems and mostly for error correction/checks.
+        """
+        
+        # Merge the bonds of the first tensor
+            # the shape of the first tensor is M[0]: (chi_left, d, chi_right)
+        M0 = self.tensors[0].data
+        psi = M0
+        
+        for t in self.tensors[1:]:
+            # t: (mL_next, d, mR_next)
+            # contract current right bond with next left bond
+            # psi: (mL, d1, mR), t: (mL2, d2, mR2)
+            # require mR == mL2
+            psi = np.tensordot(psi, t.data, axes = ([psi.ndim - 1], [0]))
+            # psi has shape now: (m_left, d_1, d_2, m_right_2) for second step, ...
+        
+        psi = np.squeeze(psi)   # remove any 1-sized boundary dimensions
+        return psi.reshape(-1)
