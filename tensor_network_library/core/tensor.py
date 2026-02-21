@@ -145,6 +145,52 @@ class Tensor:
         
         return Q_tensor, R_tensor
     
+    def svd_decomposition(self, left_indices: List[int], right_indices: List[int]) -> Tuple['Tensor', 'Tensor', 'Tensor']:
+        """
+        This is the full SVD decomposition of a tensor without any sort of truncation.
+        
+        Arguments:
+            left_indeces: Indices to group into left matrices
+            right_indices: Indices to group into right matrices
+            
+        Returns:
+            Tuple of U, S and V (dagger)
+            
+        Algorithm:
+            1. Combine left/right indices into two groups
+            2. Reshape into matrix
+            3. SVD
+            4. Reshape back to tensor form        
+        """
+    
+        # Verify that all indices are accounted for:
+        all_indices = set(left_indices + right_indices)
+        assert all_indices == set(range(self.ndim)), "All indices must be specified."
+        
+        # First we transpose to group left and right indices
+        perm = left_indices + right_indices
+        data_perm = np.transpose(self.data, perm)
+        
+        # Calculate dimensions
+        left_dim = int(np.prod([self.shape[i] for i in left_indices]))
+        right_dim = int(np.prod([self.shape[i] for i in right_indices]))
+        
+        # Reshape into matrix
+        mat = data_perm.reshape(left_dim, right_dim)
+        
+        # Perform SVD
+        U, S, Vd = svd(mat, full_matrices=False, lapack_driver='gesdd')
+        
+        # Reshape
+        chi = len(S)
+        left_shape = tuple([self.shape[i] for i in left_indices]) + (chi,)
+        right_shape = (chi,) + tuple([self.shape[i] for i in right_indices])
+        U_reshaped = Tensor(U.reshape(left_shape))
+        V_reshaped = Tensor(Vd.reshape(right_shape))
+        
+        return U_reshaped, S, V_reshaped
+        
+        
     def norm(self) -> float:
         """Returns the Frobenius norm."""
         return float(np.linalg.norm(self.data))

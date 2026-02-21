@@ -10,6 +10,7 @@
 - [x] GitHub Actions CI running `pytest` on pushes and PRs.
 - [ ] Add left- right- and mied canonicalizations.
 - [x] QR decompositionmethod in tensor.
+- [x] SVD decomposition withut truncation.
 - [ ] SVD decomposition with options for the environment.
 
 ## v0.2 – State helpers and environments
