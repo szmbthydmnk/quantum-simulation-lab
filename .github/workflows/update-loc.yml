@@ -15,12 +15,11 @@ jobs:
       - name: Count lines of code
         id: loc
         run: |
-          # Count non-empty lines in tracked files under tensor_network_library and tests
+          # Count non-empty lines in tracked Python files
           LOC=$(git ls-files '*.py' | xargs cat | sed '/^\s*$/d' | wc -l)
           echo "loc=$LOC" >> "$GITHUB_OUTPUT"
 
       - name: Update README with LOC
-        uses: stefanzweifel/git-auto-commit-action@v5
         run: |
           LOC=${{ steps.loc.outputs.loc }}
           tmpfile=$(mktemp)
