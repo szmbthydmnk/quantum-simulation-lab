@@ -1,0 +1,31 @@
+name: Update lines of code in README
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  count-loc:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Count lines of code
+        id: loc
+        run: |
+          # Count non-empty lines in tracked files under tensor_network_library and tests
+          LOC=$(git ls-files '*.py' | xargs cat | sed '/^\s*$/d' | wc -l)
+          echo "loc=$LOC" >> "$GITHUB_OUTPUT"
+
+      - name: Update README with LOC
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "Update lines of code in README"
+        env:
+          LOC: ${{ steps.loc.outputs.loc }}
+        # We modify README in-place before the auto-commit action runs
+        # by leveraging a pre-commit hook style step.
+        # However, git-auto-commit-action expects the changes to already exist,
+        # so we add an extra step before it in this job.
