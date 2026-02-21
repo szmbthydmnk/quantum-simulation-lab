@@ -21,11 +21,25 @@ jobs:
 
       - name: Update README with LOC
         uses: stefanzweifel/git-auto-commit-action@v5
+        run: |
+          LOC=${{ steps.loc.outputs.loc }}
+          tmpfile=$(mktemp)
+          # Replace text between LOC-AUTO-START and LOC-AUTO-END
+          awk -v loc="$LOC" '
+            /<!-- LOC-AUTO-START -->/ {
+              print;
+              print loc;
+              skip=1;
+              next
+            }
+            /<!-- LOC-AUTO-END -->/ {
+              skip=0
+            }
+            !skip { print }
+          ' README.md > "$tmpfile"
+          mv "$tmpfile" README.md
+
+      - name: Commit README update
+        uses: stefanzweifel/git-auto-commit-action@v5
         with:
           commit_message: "Update lines of code in README"
-        env:
-          LOC: ${{ steps.loc.outputs.loc }}
-        # We modify README in-place before the auto-commit action runs
-        # by leveraging a pre-commit hook style step.
-        # However, git-auto-commit-action expects the changes to already exist,
-        # so we add an extra step before it in this job.
