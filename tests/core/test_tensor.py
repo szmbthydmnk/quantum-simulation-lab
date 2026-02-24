@@ -1,5 +1,7 @@
 import numpy as np
+import pytest
 from tensor_network_library.core.tensor import Tensor
+from tensor_network_library.core.policy import TruncationPolicy
 
 def test_tensor_copy_and_conj():
     data = np.array([[1+1j, 2-3j]], dtype=np.complex128)
@@ -21,9 +23,6 @@ def test_tensor_contract_simple():
 
     expected = np.tensordot(a.data, b.data, axes=([1], [0]))
     assert np.allclose(c.data, expected)
-<<<<<<< Updated upstream
-    
-=======
     
 def test_svd_decomposition_reconstructs_tensor():
     # Random complex tensor with 3 indices
@@ -102,20 +101,31 @@ def test_svd_truncation_respects_cutoff_and_max_bond_dim():
     assert V_trunc.data.shape == (chi, shape[1])
 
 
-def test_svd_truncation_reconstructs_approx_tensor():
-    rng = np.random.default_rng(1)
-    shape = (3, 4, 5)
+@pytest.mark.parametrize(
+    "shape,left_indices,seed",
+    [
+        ((3, 4, 5), [0], 1),
+        ((4, 3, 6), [0], 2),
+        ((2, 3, 4, 5), [0, 1], 3),
+        # Approximate 12-qubit statevector reshaped as 8 x 8 x 64
+        ((8, 8, 64), [0, 1], 4),
+    ],
+)
+def test_svd_truncation_reconstructs_approx_tensor(shape, left_indices, seed):
+    rng = np.random.default_rng(seed)
     data = rng.normal(size=shape) + 1j * rng.normal(size=shape)
     A = Tensor(data)
 
-    # Use a relaxed cutoff so we drop at least one singular value
-    policy = TruncationPolicy(max_bond_dim=10, cutoff=0.05, strict=False)
+    policy = TruncationPolicy(max_bond_dim=64, cutoff=10**(-10), strict=False)
 
-    U_trunc, S_trunc, V_trunc = A.svd(left_indices=[0], right_indices=[1, 2], policy=policy)
+    right_indices = [i for i in range(len(shape)) if i not in left_indices]
 
-    # Reconstruct approximate tensor from truncated SVD
-    left_indices = [0]
-    right_indices = [1, 2]
+    U_trunc, S_trunc, V_trunc = A.svd(
+        left_indices=left_indices,
+        right_indices=right_indices,
+        policy=policy,
+    )
+
     left_dim = int(np.prod([shape[i] for i in left_indices]))
     right_dim = int(np.prod([shape[i] for i in right_indices]))
     chi = len(S_trunc)
@@ -125,11 +135,18 @@ def test_svd_truncation_reconstructs_approx_tensor():
     mat_approx = U_mat @ np.diag(S_trunc) @ V_mat
     data_approx = mat_approx.reshape(shape)
 
-    # Error should be no larger than the discarded singular values
-    U_full, S_full, V_full = A.svd_decomposition(left_indices=[0], right_indices=[1, 2])
+    U_full, S_full, V_full = A.svd_decomposition(
+        left_indices=left_indices,
+        right_indices=right_indices,
+    )
     discarded = S_full[chi:]
     frob_disc = np.linalg.norm(discarded)
 
     err = np.linalg.norm(data - data_approx)
+
+    print("reconstruction_error =", err - frob_disc)
+    print("discarded_singular_norm =", frob_disc)
+
     assert err <= frob_disc + 1e-10
->>>>>>> Stashed changes
+
+

@@ -146,8 +146,6 @@ class Tensor:
         
         return Q_tensor, R_tensor
     
-<<<<<<< Updated upstream
-=======
     def svd_decomposition(self, left_indices: List[int], right_indices: List[int]) -> Tuple['Tensor', 'Tensor', 'Tensor']:
         """
         This is the full SVD decomposition of a tensor without any sort of truncation.
@@ -212,7 +210,6 @@ class Tensor:
 
         return U_trunc, S_trunc, V_trunc
     
->>>>>>> Stashed changes
     def norm(self) -> float:
         """Returns the Frobenius norm."""
         return float(np.linalg.norm(self.data))
