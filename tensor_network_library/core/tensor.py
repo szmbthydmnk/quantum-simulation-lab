@@ -5,6 +5,7 @@ from typing import Tuple, Optional, List
 import numpy as np
 from numpy.typing import NDArray
 from scipy.linalg import svd, qr, eigh
+from .policy import TruncationPolicy
 
 ComplexArray = NDArray[np.complex128]
 
@@ -187,10 +188,29 @@ class Tensor:
         right_shape = (chi,) + tuple([self.shape[i] for i in right_indices])
         U_reshaped = Tensor(U.reshape(left_shape))
         V_reshaped = Tensor(Vd.reshape(right_shape))
+        S_tensor = Tensor(S)
+
+        return U_reshaped, S_tensor, V_reshaped
         
-        return U_reshaped, S, V_reshaped
+    def svd(self, left_indices: List[int], right_indices: List[int], policy: TruncationPolicy | None = None) -> Tuple['Tensor', 'Tensor', 'Tensor']:
+        """
+        SVD decomposition of a tensor with optional policy
+
+        """    
+    
+        U, S, Vt = self.svd_decomposition(left_indices, right_indices)
+
+        if policy is None:
+            return U, S, Vt
         
-        
+        chi = policy.choose_bond_dim(S)
+
+        U_trunc = Tensor(U.data[..., :chi])
+        S_trunc = Tensor(S.data[:chi])
+        V_trunc = Tensor(Vt.data[:chi, ...])
+
+        return U_trunc, S_trunc, V_trunc
+    
     def norm(self) -> float:
         """Returns the Frobenius norm."""
         return float(np.linalg.norm(self.data))
@@ -219,5 +239,3 @@ class Tensor:
         arrays = [self.data] + [t.data for t in others]
         out = np.einsum(subscripts, *arrays)
         return Tensor(out)
-         
-    
