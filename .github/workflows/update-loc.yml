@@ -1,0 +1,45 @@
+name: Update lines of code in README
+
+on:
+  push:
+    branches:
+      - main
+permissions: 
+  contents: write
+jobs:
+  count-loc:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Count lines of code
+        id: loc
+        run: |
+          # Count non-empty lines in tracked Python files
+          LOC=$(git ls-files '*.py' | xargs cat | sed '/^\s*$/d' | wc -l)
+          echo "loc=$LOC" >> "$GITHUB_OUTPUT"
+
+      - name: Update README with LOC
+        run: |
+          LOC=${{ steps.loc.outputs.loc }}
+          tmpfile=$(mktemp)
+          # Replace text between LOC-AUTO-START and LOC-AUTO-END
+          awk -v loc="$LOC" '
+            /<!-- LOC-AUTO-START -->/ {
+              print;
+              print loc;
+              skip=1;
+              next
+            }
+            /<!-- LOC-AUTO-END -->/ {
+              skip=0
+            }
+            !skip { print }
+          ' README.md > "$tmpfile"
+          mv "$tmpfile" README.md
+
+      - name: Commit README update
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "Update lines of code in README"
