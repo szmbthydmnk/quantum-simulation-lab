@@ -203,7 +203,9 @@ class Tensor:
         if policy is None:
             return U, S, Vt
         
-        chi = policy.choose_bond_dim(S)
+        # Use the numeric singular values for the policy
+        s_vals = np.asarray(S.data, dtype=float)
+        chi = policy.choose_bond_dim(s_vals)
 
         U_trunc = Tensor(U.data[..., :chi])
         S_trunc = Tensor(S.data[:chi])
