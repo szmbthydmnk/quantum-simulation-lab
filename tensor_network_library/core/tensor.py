@@ -32,10 +32,32 @@ class Tensor:
             physical_indices: Names of physical indices (e.g., ['p_1', 'p_2'])
             bond_indices: Names of bond indices (e.g., ['L', 'R'])
         """
-        self.data = np.asarray(data, dtype = np.complex128)
+        self.data = np.asarray(data)    #, dtype = np.complex128)
         self.physical_indices = physical_indices or []
         self.bond_indices = bond_indices or []
 
+    def __len__(self):
+        return len(self.data)
+    
+    def __getitem__(self, key):
+        out = self.data[key]
+        if np.isscalar(out) or getattr(out, "shape", ()) == ():
+            return out
+        return Tensor(out, physical_indices=self.physical_indices.copy(), bond_indices=self.bond_indices.copy())
+
+    def __iter__(self):
+        return iter(self.data)
+        
+    def __pow__(self, power, modulo=None):
+        if modulo is not None:
+            return NotImplemented
+        
+        return Tensor(np.power(self.data, power),
+                      physical_indices=self.physical_indices.copy(),
+                      bond_indices=self.bond_indices.copy())
+    def __ge__(self, other):
+        return Tensor(self.data >= (other.data if isinstance(other, Tensor) else other))
+    
     @property
     def shape(self) -> Tuple[int, ...]:
         """Returns shape of the tensor"""
@@ -180,15 +202,22 @@ class Tensor:
         mat = data_perm.reshape(left_dim, right_dim)
         
         # Perform SVD
-        U, S, Vd = svd(mat, full_matrices=False, lapack_driver='gesdd')
+        U, S, Vh = svd(mat, full_matrices=False, lapack_driver='gesdd')
         
         # Reshape
         chi = len(S)
         left_shape = tuple([self.shape[i] for i in left_indices]) + (chi,)
         right_shape = (chi,) + tuple([self.shape[i] for i in right_indices])
-        U_reshaped = Tensor(U.reshape(left_shape))
-        V_reshaped = Tensor(Vd.reshape(right_shape))
-        S_tensor = Tensor(S)
+
+        U_reshaped = Tensor(U.reshape(left_shape),
+                            physical_indices=self.physical_indices.copy(),
+                            bond_indices=self.bond_indices.copy())
+        V_reshaped = Tensor(Vh.reshape(right_shape),
+                            physical_indices=self.physical_indices.copy(),
+                            bond_indices=self.bond_indices.copy())
+        S_tensor = Tensor(S, 
+                          physical_indices=[],
+                          bond_indices=[])
 
         return U_reshaped, S_tensor, V_reshaped
         
