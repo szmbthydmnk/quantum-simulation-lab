@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
-from typing import List, Optional, Tuple, Union
+from typing import List, Union
 import numpy as np
 
 from .tensor import Tensor
 from .index import Index
 from .policy import TruncationPolicy
-
 
 BondPolicy = Union[str, List[int]]
 PhysDims = Union[int, List[int]]
@@ -21,7 +20,8 @@ class MPS:
     Structure:
         - Each site i has a tensor with indices [bond_left, physical, bond_right]
         - Bonds connect adjacent tensors via shared Index objects.
-        - Supports arbitrary bond dimensions via policy.
+        - By default the MPS is created as a *structure only* object:
+            tensors have data=None but valid Index connectivity.
     """
 
     def __init__(
@@ -34,30 +34,31 @@ class MPS:
         dtype: np.dtype = np.complex128,
     ):
         """
-        Initialize an MPS *structure* (Indices + site tensors).
+        Initialize an MPS *structure* (Indices + site tensors with data=None).
 
         Args:
             L: Chain length.
             physical_dims: Physical dimension(s). If int, same for all sites.
                 If List, must have length L.
             bond_policy:
-                - "default": chi_i = min(prod_{k<=i} d_k, prod_{k>i} d_k), optionally capped by truncation.chi_max.
-                - "uniform": uses truncation.chi_max as internal chi (boundaries stay 1).
-                - List[int]: explicit bond dims of length L+1, boundaries should be 1.
+                - "default": chi_i = min(prod_{k<=i} d_k, prod_{k>i} d_k),
+                            optionally capped by truncation.max_bond_dim.
+                - "uniform": uses truncation.max_bond_dim as internal chi (boundaries stay 1).
+                - List[int]: explicit bond dims of length L+1 (boundaries should be 1).
             name: Name tag for this MPS (used in Index names).
             truncation: Optional truncation policy (used to cap bond dims for "default"/"uniform").
-            allocate: If True, allocate tensors with zeros; if False, keep data=None (structure-only).
-            dtype: dtype used when allocating.
+            dtype: Default dtype used when materializing tensors.
         """
         if L <= 0:
             raise ValueError("L must be a positive integer")
 
         self.L = int(L)
         self.name = str(name)
+        self.dtype = dtype
 
-        # These are Index objects (not ints).
-        self.indices: List[Index] = []  # physical indices
-        self.bonds: List[Index] = []    # bond indices
+        # Indices (Index objects)
+        self.indices: List[Index] = []  # physical
+        self.bonds: List[Index] = []    # bonds
 
         # Site tensors (Tensor objects)
         self.tensors: List[Tensor] = []
@@ -66,20 +67,30 @@ class MPS:
         self._physical_dims: List[int] = self._parse_physical_dims(physical_dims)
 
         # Resolve bond dims (list[int] of length L+1)
-        self._bond_dims: List[int] = self._resolve_bond_dims(bond_policy=bond_policy, truncation=truncation)
+        self._bond_dims: List[int] = self._resolve_bond_dims(
+            bond_policy=bond_policy, truncation=truncation
+        )
 
         # Create Index objects
         self.indices = [
-            Index(dim=self._physical_dims[i], name=f"{self.name}_phys_{i}", tags={"phys", f"i={i}"})
+            Index(
+                dim=self._physical_dims[i],
+                name=f"{self.name}_phys_{i}",
+                tags=frozenset({"phys", f"i={i}"}),
+            )
             for i in range(self.L)
         ]
         self.bonds = [
-            Index(dim=self._bond_dims[i], name=f"{self.name}_bond_{i}", tags={"bond", f"b={i}"})
+            Index(
+                dim=self._bond_dims[i],
+                name=f"{self.name}_bond_{i}",
+                tags=frozenset({"bond", f"b={i}"}),
+            )
             for i in range(self.L + 1)
         ]
 
-        # Create tensors
-        self._create_empty_tensors(dtype=dtype)
+        # Create unmaterialized site tensors
+        self._create_empty_tensors()
 
     # -------------------------
     # Constructors / factories
@@ -100,12 +111,19 @@ class MPS:
         obj.tensors = [t.copy() for t in tensors]
         obj.L = len(obj.tensors)
 
-        # Extract indices from tensors
         obj.indices = [t.indices[1] for t in obj.tensors]
         obj.bonds = [obj.tensors[0].indices[0]] + [t.indices[2] for t in obj.tensors]
 
         obj._physical_dims = [ix.dim for ix in obj.indices]
         obj._bond_dims = [ix.dim for ix in obj.bonds]
+
+        # Best-effort dtype inference
+        obj.dtype = np.complex128
+        for t in obj.tensors:
+            if t.data is not None:
+                obj.dtype = t.data.dtype
+                break
+
         return obj
 
     @classmethod
@@ -124,6 +142,7 @@ class MPS:
         """
         L = len(state_indices)
         bond_dims = [1] * (L + 1)
+
         mps = cls(
             L=L,
             physical_dims=physical_dims,
@@ -136,6 +155,8 @@ class MPS:
             s = int(s)
             if not (0 <= s < physical_dims):
                 raise ValueError(f"Invalid local state index at site {i}: {s}")
+
+            mps.tensors[i].materialize_zeros(dtype=dtype)
             mps.tensors[i].data[...] = 0
             mps.tensors[i].data[0, s, 0] = 1.0
 
@@ -177,6 +198,7 @@ class MPS:
             if v.shape[0] != physical_dims[i]:
                 raise ValueError(f"local_states[{i}] has wrong length")
 
+            mps.tensors[i].materialize_zeros(dtype=dtype)
             mps.tensors[i].data[...] = 0
             mps.tensors[i].data[0, :, 0] = v
 
@@ -194,12 +216,17 @@ class MPS:
 
         if len(physical_dims) != self.L:
             raise AssertionError("physical_dims must have length L")
+
         dims = [int(d) for d in physical_dims]
         if any(d <= 0 for d in dims):
             raise ValueError("All physical dimensions must be positive")
         return dims
 
-    def _resolve_bond_dims(self, bond_policy: BondPolicy, truncation: TruncationPolicy | None) -> List[int]:
+    def _resolve_bond_dims(
+        self,
+        bond_policy: BondPolicy,
+        truncation: TruncationPolicy | None,
+    ) -> List[int]:
         # Explicit bond dims
         if isinstance(bond_policy, list):
             if len(bond_policy) != self.L + 1:
@@ -207,24 +234,27 @@ class MPS:
             dims = [int(x) for x in bond_policy]
             if any(d <= 0 for d in dims):
                 raise ValueError("Bond dimensions must be positive")
+            if dims[0] != 1 or dims[-1] != 1:
+                raise ValueError("Boundary bond dimensions must be 1")
             return dims
 
-        # Helper: extract chi_max if present
-        chi_max = None
-        if truncation is not None and hasattr(truncation, "chi_max"):
-            chi_max = getattr(truncation, "chi_max")
+        # Helper: extract cap if present
+        chi_cap = truncation.max_bond_dim if truncation is not None else None
 
         if bond_policy == "uniform":
-            if chi_max is None:
-                raise ValueError("bond_policy='uniform' requires truncation.chi_max to be set")
-            chi = int(chi_max)
+            if chi_cap is None:
+                raise ValueError("bond_policy='uniform' requires truncation.max_bond_dim to be set")
+            chi = int(chi_cap)
             if chi <= 0:
-                raise ValueError("truncation.chi_max must be positive for uniform bond policy")
+                raise ValueError("truncation.max_bond_dim must be positive for uniform bond policy")
+            if self.L == 1:
+                return [1, 1]
             return [1] + [chi] * (self.L - 1) + [1]
 
         if bond_policy == "default":
             # chi_i = min(prod left physical dims, prod right physical dims)
             dims: List[int] = [1]
+
             left_prod = 1
             right_prod = 1
             for d in self._physical_dims:
@@ -234,29 +264,28 @@ class MPS:
                 left_prod *= d
                 right_prod //= d
                 chi = min(left_prod, right_prod)
-                if chi_max is not None:
-                    chi = min(int(chi), int(chi_max))
+                if chi_cap is not None:
+                    chi = min(int(chi), int(chi_cap))
                 dims.append(int(chi))
+
+            # dims has length L+1 and should end with 1
+            if dims[0] != 1 or dims[-1] != 1:
+                raise RuntimeError("Internal error: default bond dims should have boundary 1s")
             return dims
 
         raise ValueError(f"Unknown bond_policy: {bond_policy!r}")
 
-    def _create_empty_tensors(self, dtype: np.dtype) -> None:
-        """Create site tensors with indices [bond_left, physical, bond_right]."""
+    def _create_empty_tensors(self) -> None:
+        """Create site tensors with indices [bond_left, physical, bond_right] and data=None."""
         self.tensors = []
         for i in range(self.L):
             inds = [self.bonds[i], self.indices[i], self.bonds[i + 1]]
-            if allocate:
-                shape = (inds[0].dim, inds[1].dim, inds[2].dim)
-                data = np.zeros(shape, dtype=dtype)
-            else:
-                data = None
-            self.tensors.append(Tensor(data, indices=inds))
+            self.tensors.append(Tensor(None, indices=inds))
 
     def _assert_materialized(self) -> None:
         for i, t in enumerate(self.tensors):
             if t.data is None:
-                raise ValueError(f"MPS tensor at site {i} has data=None (structure-only MPS)")
+                raise ValueError(f"MPS tensor at site {i} has data=None (unmaterialized MPS)")
 
     # -------------------------
     # Python protocol
@@ -298,15 +327,8 @@ class MPS:
         overlap = np.eye(self.bond_dims[0], dtype=np.complex128)
 
         for tensor in self.tensors:
-            # overlap: (chi_left, chi_left')
-            # tensor: (chi_left, d, chi_right)
-
             temp = np.tensordot(overlap, tensor.data, axes=([0], [0]))
-            # temp: (chi_left', d, chi_right)
-
             temp = np.tensordot(temp, tensor.conj().data, axes=([0, 1], [0, 1]))
-            # temp: (chi_right, chi_right')
-
             overlap = temp
 
         return float(np.sqrt(np.abs(np.trace(overlap))))
@@ -341,7 +363,6 @@ class MPS:
 
         for t in self.tensors[1:]:
             psi = np.tensordot(psi, t.data, axes=([psi.ndim - 1], [0]))
-            # grows physical legs, keeps boundary bonds on ends
 
-        psi = np.squeeze(psi)  # remove boundary dims if 1
+        psi = np.squeeze(psi)
         return psi.reshape(-1)
