@@ -1,6 +1,13 @@
 # Development Diary
 
-## 2026.02-21 -- v0.1.3
+## 2026-03-02 -- 2026-03-03 -- v0.1.5
+- Developed `index` in order to track contractions properly.
+- Updated `tensor` to accomodate the new indexing method.
+- Working on `mps`, therefore I disabled all non-necessary tests outside the `test_mps`
+
+## 2026-02-
+
+## 2026-02-21 -- v0.1.3
 
 - Added a base SVD decomposition method to tensor.py (`svd_decomposition`)
 
