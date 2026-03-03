@@ -5,7 +5,7 @@ import numpy as np
 from numpy.typing import NDArray
 from scipy.linalg import svd, qr, eigh  # NOTE: eigh currently unused, keep or remove
 from .policy import TruncationPolicy
-
+from .index import Index
 ComplexArray = NDArray[np.complex128]
 
 
@@ -22,6 +22,7 @@ class Tensor:
     def __init__(
         self,
         data: ComplexArray,
+        indices: Optional[List[Index]] = None,
         physical_indices: Optional[List[str]] = None,
         bond_indices: Optional[List[str]] = None,
     ):
@@ -30,11 +31,26 @@ class Tensor:
 
         Args:
             data: NumPy array
+            inds: List of Index objects (one per axis). If None, dummy indices are created.
             physical_indices: Names of physical indices (e.g., ['p_1', 'p_2'])
             bond_indices: Names of bond indices (e.g., ['L', 'R'])
         """
         # Keep dtype as-provided (important: SVD singular values are real floats)
         self.data = np.asarray(data)
+
+        # Initialize indices: 
+            # either provided or auto-generated
+        if indices is None:
+            indices = [Index(dim = d, name = f"axis_{i}") for i, d in enumerate(self.shape)]
+        else:
+            assert len(indices) == self.ndim, f"Expected {self.ndim} indices, got {len(indices)}."
+            
+            for ind, d in zip(indices, self.shape):
+                assert ind.dim == d, f"Index dim {ind.dim} doesn't match axis dim {d}."
+
+        self.indices = indices
+
+        # keep old metadata for compatibility (depricated, will remove after transition)
         self.physical_indices = physical_indices or []
         self.bond_indices = bond_indices or []
 
@@ -51,11 +67,8 @@ class Tensor:
         out = self.data[key]
         if np.isscalar(out) or getattr(out, "shape", ()) == ():
             return out
-        return Tensor(
-            out,
-            physical_indices=self.physical_indices.copy(),
-            bond_indices=self.bond_indices.copy(),
-        )
+        return Tensor(out, indices = self.indices.copy())
+
 
     def __iter__(self):
         return iter(self.data)
@@ -79,26 +92,20 @@ class Tensor:
 
     def __ge__(self, other) -> "Tensor":
         other_arr = other.data if isinstance(other, Tensor) else other
-        return Tensor(
-            self.data >= other_arr,
-            physical_indices=self.physical_indices.copy(),
-            bond_indices=self.bond_indices.copy(),
-        )
+        return Tensor(self.data >= other_arr,
+                      indices = self.indices.copy())
 
     def __mul__(self, scalar: complex) -> "Tensor":
-        """Left scalar multiplication."""
-        return Tensor(
-            self.data * scalar,
-            physical_indices=self.physical_indices.copy(),
-            bond_indices=self.bond_indices.copy(),
-        )
+        return Tensor(self.data * scalar,
+                      indices=self.indices.copy())
 
     def __rmul__(self, scalar: complex) -> "Tensor":
         """Right scalar multiplication."""
         return self.__mul__(scalar)
 
     def __repr__(self) -> str:
-        return f"Tensor(shape={self.shape})"
+        inds_repr = ", ".join(str(i) for i in self.indices)
+        return f"Tensor(shape={self.shape}, inds=[{inds_repr}])"
 
     # ----------------------------
     # Basic properties
@@ -120,19 +127,13 @@ class Tensor:
 
     def copy(self) -> "Tensor":
         """Create a deep copy of the tensor."""
-        return Tensor(
-            self.data.copy(),
-            physical_indices=self.physical_indices.copy(),
-            bond_indices=self.bond_indices.copy(),
-        )
+        return Tensor(self.data.copy(), 
+                      indices = [ind.sim() for ind in self.indices])
 
     def conj(self) -> "Tensor":
         """Return the complex conjugate of the tensor."""
-        return Tensor(
-            np.conj(self.data),
-            physical_indices=self.physical_indices.copy(),
-            bond_indices=self.bond_indices.copy(),
-        )
+        return Tensor(np.conj(self.data),
+                      indices=self.indices.copy())
 
     def contract(self, other: "Tensor", axes: Tuple[List[int], List[int]]) -> "Tensor":
         """
@@ -143,52 +144,99 @@ class Tensor:
             axes: Tuple (self_axes, other_axes) specifying which axes to contract.
 
         Returns:
-            Contracted Tensor.
+            Contracted Tensor with remaining indices.
         """
-        # NOTE: proper index bookkeeping for contractions needs per-axis labels;
-        # for now we only return numeric result.
-        return Tensor(np.tensordot(self.data, other.data, axes=axes))
+        # Numeric contraction
+        result_data = np.tensordot(self.data, other.data, axes = axes)
+
+        self_remaining = [i for i in range(self.ndim) if i not in axes[0]]
+        other_remaining = [i for i in range(other.ndim) if i not in axes[1]]
+
+        result_inds = ([self.indices[i] for i in self_remaining] + [other.indices[i] for i in other_remaining])
+        return Tensor(result_data, indices = result_inds)
 
     def reshape(self, new_shape: Tuple[int, ...]) -> "Tensor":
         """
         Reshape the tensor to desired shape.
-
+        
+        NOTE: Reshape can change index structure; preserve old indices or create new ones.
+        For now, we create fresh dummy indices.
+        
         Args:
             new_shape: New shape tuple.
-
+        
         Returns:
             Reshaped Tensor.
         """
-        return Tensor(
-            self.data.reshape(new_shape),
-            physical_indices=self.physical_indices.copy(),
-            bond_indices=self.bond_indices.copy(),
-        )
+        new_data = self.data.reshape(new_shape)
+        # Create fresh indices (reshape changes structure, so old indices may not apply)
+        new_inds = [Index(dim=d, name=f"reshaped_{i}") for i, d in enumerate(new_shape)]
+        return Tensor(new_data, indices=new_inds)
 
     def transpose(self, axes: Optional[Tuple[int, ...]] = None) -> "Tensor":
         """
         Transpose the tensor by permuting axes.
-
+        
         Args:
             axes: Permutation of axes. If None, reverses axes.
-
+        
         Returns:
             Transposed Tensor.
         """
-        return Tensor(
-            np.transpose(self.data, axes),
-            physical_indices=self.physical_indices.copy(),
-            bond_indices=self.bond_indices.copy(),
-        )
+        new_data = np.transpose(self.data, axes)
+        new_inds = [self.indices[i] for i in axes] if axes is not None else list(reversed(self.indices))
+        return Tensor(new_data, indices=new_inds)
 
+    def permute_by_inds(self, target_inds: List[Index]) -> "Tensor":
+        """
+        Permute this tensor to match a target index order.
+        
+        Finds a permutation of current axes such that indices match target_inds.
+        Useful for placing a tensor into a canonical form.
+        
+        Args:
+            target_inds: Desired Index order.
+        
+        Returns:
+            Permuted Tensor matching target order.
+        
+        Raises:
+            ValueError: If current indices don't match target (by id/tags/prime).
+        """
+        assert len(target_inds) == self.ndim, "Target indices must match tensor rank."
+        
+        # Find permutation: target_inds[i] should come from self.indices[perm[i]]
+        perm = []
+        used = set()
+        for target_ind in target_inds:
+            found = False
+            for j, self_ind in enumerate(self.indices):
+                if j not in used and self_ind == target_ind:
+                    perm.append(j)
+                    used.add(j)
+                    found = True
+                    break
+            if not found:
+                raise ValueError(
+                    f"Could not find index {target_ind} in tensor indices {self.indices}"
+                )
+        
+        # Apply permutation
+        permuted_data = np.transpose(self.data, perm)
+        permuted_inds = [self.indices[i] for i in perm]
+        return Tensor(permuted_data, indices=permuted_inds)
     # ----------------------------
     # Factorizations
     # ----------------------------
 
-    def qr_decomposition(self, left_indices: List[int], right_indices: List[int]) -> Tuple["Tensor", "Tensor"]:
+    def qr_decomposition(
+        self, left_indices: List[int], right_indices: List[int]
+    ) -> Tuple["Tensor", "Tensor"]:
         """
-        Performs a QR decomposition of the tensor grouped into (left_indices | right_indices).
-
+        QR decomposition grouped into (left_indices | right_indices).
+        
+        Creates a new bond Index for the output.
+        
         Returns:
             (Q, R) as Tensors.
         """
@@ -202,28 +250,35 @@ class Tensor:
         right_dim = int(np.prod([self.shape[i] for i in right_indices]))
 
         mat = data_perm.reshape(left_dim, right_dim)
-
         Q, R = qr(mat, mode="full")
 
         chi = Q.shape[1]
-        Q_shape = tuple([self.shape[i] for i in left_indices]) + (chi,)
-        R_shape = (chi,) + tuple([self.shape[i] for i in right_indices])
+        
+        # Create new bond index
+        bond_ind = Index(dim=chi, name="QR_bond", tags={"QR"})
+        
+        left_shape = tuple([self.shape[i] for i in left_indices]) + (chi,)
+        right_shape = (chi,) + tuple([self.shape[i] for i in right_indices])
+        
+        # Gather indices in canonical order: left_inds + bond, then bond + right_inds
+        Q_inds = [self.indices[i] for i in left_indices] + [bond_ind]
+        R_inds = [bond_ind] + [self.indices[i] for i in right_indices]
 
-        Q_tensor = Tensor(
-            Q.reshape(Q_shape),
-            physical_indices=self.physical_indices.copy(),
-            bond_indices=self.bond_indices.copy(),
-        )
-        R_tensor = Tensor(R.reshape(R_shape))
+        Q_tensor = Tensor(Q.reshape(left_shape), indices=Q_inds)
+        R_tensor = Tensor(R.reshape(right_shape), indices=R_inds)
 
         return Q_tensor, R_tensor
 
-    def svd_decomposition(self, left_indices: List[int], right_indices: List[int]) -> Tuple["Tensor", "Tensor", "Tensor"]:
+    def svd_decomposition(
+        self, left_indices: List[int], right_indices: List[int]
+    ) -> Tuple["Tensor", "Tensor", "Tensor"]:
         """
-        Full SVD decomposition of a tensor without truncation.
-
+        Full SVD decomposition without truncation.
+        
+        Creates a new bond Index for the output.
+        
         Returns:
-            (U, S, Vh) as Tensors, where S is a 1D tensor of singular values.
+            (U, S, Vh) as Tensors, where S is 1D.
         """
         all_indices = set(left_indices + right_indices)
         assert all_indices == set(range(self.ndim)), "All indices must be specified."
@@ -235,28 +290,24 @@ class Tensor:
         right_dim = int(np.prod([self.shape[i] for i in right_indices]))
 
         mat = data_perm.reshape(left_dim, right_dim)
-
         U, S, Vh = svd(mat, full_matrices=False, lapack_driver="gesdd")
 
         chi = len(S)
+        
+        # Create new bond index
+        bond_ind = Index(dim=chi, name="SVD_bond", tags={"SVD"})
+        
         left_shape = tuple([self.shape[i] for i in left_indices]) + (chi,)
         right_shape = (chi,) + tuple([self.shape[i] for i in right_indices])
+        
+        # Gather indices in canonical order
+        U_inds = [self.indices[i] for i in left_indices] + [bond_ind]
+        S_inds = [bond_ind]
+        Vh_inds = [bond_ind] + [self.indices[i] for i in right_indices]
 
-        U_reshaped = Tensor(
-            U.reshape(left_shape),
-            physical_indices=self.physical_indices.copy(),
-            bond_indices=self.bond_indices.copy(),
-        )
-        V_reshaped = Tensor(
-            Vh.reshape(right_shape),
-            physical_indices=self.physical_indices.copy(),
-            bond_indices=self.bond_indices.copy(),
-        )
-        S_tensor = Tensor(
-            S,
-            physical_indices=[],
-            bond_indices=[],
-        )
+        U_reshaped = Tensor(U.reshape(left_shape), indices=U_inds)
+        V_reshaped = Tensor(Vh.reshape(right_shape), indices=Vh_inds)
+        S_tensor = Tensor(S.reshape((chi,)), indices=S_inds)
 
         return U_reshaped, S_tensor, V_reshaped
 
@@ -264,42 +315,35 @@ class Tensor:
         self,
         left_indices: List[int],
         right_indices: List[int],
-        policy: TruncationPolicy | None = None,
+        policy: Optional[TruncationPolicy] = None,
     ) -> Tuple["Tensor", "Tensor", "Tensor"]:
         """
-        SVD decomposition of a tensor with optional truncation policy.
-
-        If policy is None:
-            Returns full (U, S, Vh).
-
-        If policy is provided:
-            Chooses chi via policy and truncates along the bond dimension,
-            while preserving metadata from the full decomposition outputs.
+        SVD decomposition with optional truncation policy.
+        
+        If policy is None, returns full decomposition.
+        If policy is provided, truncates along the bond dimension.
         """
         U, S, Vt = self.svd_decomposition(left_indices, right_indices)
 
         if policy is None:
             return U, S, Vt
 
-        # Singular values are real; cast to float for policy.
+        # Singular values are real; cast to float for policy
         s_vals = np.asarray(S.data, dtype=float)
         chi = policy.choose_bond_dim(s_vals)
 
-        # IMPORTANT: preserve metadata from U/S/Vt instead of dropping it.
+        # Truncate and preserve indices
         U_trunc = Tensor(
             U.data[..., :chi],
-            physical_indices=U.physical_indices.copy(),
-            bond_indices=U.bond_indices.copy(),
+            indices=U.indices[:-1] + [Index(dim=chi, name=U.indices[-1].name, tags=U.indices[-1].tags)],
         )
         S_trunc = Tensor(
             S.data[:chi],
-            physical_indices=S.physical_indices.copy(),
-            bond_indices=S.bond_indices.copy(),
+            indices=[Index(dim=chi, name=S.indices[0].name, tags=S.indices[0].tags)],
         )
         V_trunc = Tensor(
             Vt.data[:chi, ...],
-            physical_indices=Vt.physical_indices.copy(),
-            bond_indices=Vt.bond_indices.copy(),
+            indices=[Index(dim=chi, name=Vt.indices[0].name, tags=Vt.indices[0].tags)] + Vt.indices[1:],
         )
 
         return U_trunc, S_trunc, V_trunc
@@ -319,8 +363,7 @@ class Tensor:
             raise ValueError("Cannot normalize a zero-norm tensor.")
         return Tensor(
             self.data / n,
-            physical_indices=self.physical_indices.copy(),
-            bond_indices=self.bond_indices.copy(),
+            indices=self.indices.copy(),
         )
 
     # ----------------------------
