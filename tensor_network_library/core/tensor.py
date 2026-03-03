@@ -21,8 +21,8 @@ class Tensor:
 
     def __init__(
         self,
-        data: ComplexArray,
-        indices: Optional[List[Index]] = None,
+        data: ComplexArray | None,
+        indices: List[Index] | None = None,
         physical_indices: Optional[List[str]] = None,
         bond_indices: Optional[List[str]] = None,
     ):
@@ -36,7 +36,7 @@ class Tensor:
             bond_indices: Names of bond indices (e.g., ['L', 'R'])
         """
         # Keep dtype as-provided (important: SVD singular values are real floats)
-        self.data = np.asarray(data)
+        self.data = None if data is None else np.asarray(data)
 
         # Initialize indices: 
             # either provided or auto-generated
