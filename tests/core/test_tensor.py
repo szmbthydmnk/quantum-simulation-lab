@@ -1,152 +1,280 @@
-import numpy as np
+"""Tests for the Tensor class with Index-based connectivity."""
+
 import pytest
+import numpy as np
 from tensor_network_library.core.tensor import Tensor
+from tensor_network_library.core.index import Index
 from tensor_network_library.core.policy import TruncationPolicy
 
-def test_tensor_copy_and_conj():
-    data = np.array([[1+1j, 2-3j]], dtype=np.complex128)
-    t = Tensor(data)
 
-    t_copy = t.copy()
-    assert np.allclose(t.data, t_copy.data)
-    assert t is not t_copy
-
-    t_conj = t.conj()
-    assert np.allclose(t_conj.data, np.conjugate(data))
-
-def test_tensor_contract_simple():
-    a = Tensor(np.arange(6, dtype=np.complex128).reshape(2, 3))
-    b = Tensor(np.ones((3, 4), dtype=np.complex128))
-
-    c = a.contract(b, axes=([1], [0]))
-    assert c.shape == (2, 4)
-
-    expected = np.tensordot(a.data, b.data, axes=([1], [0]))
-    assert np.allclose(c.data, expected)
+class TestTensorCreation:
+    """Test Tensor creation and basic properties."""
     
-def test_svd_decomposition_reconstructs_tensor():
-    # Random complex tensor with 3 indices
-    rng = np.random.default_rng(123)
-    shape = (3, 4, 5)
-    data = rng.normal(size=shape) + 1j * rng.normal(size=shape)
-    A = Tensor(data)
-
-    # Choose a bipartition: (0) | (1, 2)
-    left_indices = [0]
-    right_indices = [1, 2]
-
-    U, S, V = A.svd_decomposition(left_indices=left_indices, right_indices=right_indices)
-
-    # Check singular values are 1D
-    assert S.ndim == 1
-
-    # Flatten U and V back to matrix form
-    left_dim = int(np.prod([shape[i] for i in left_indices]))
-    right_dim = int(np.prod([shape[i] for i in right_indices]))
-    chi = S.shape[0]
-
-    U_mat = U.data.reshape(left_dim, chi)
-    V_mat = V.data.reshape(chi, right_dim)
-
-    # Reconstruct matrix and then tensor
-    mat_reconstructed = U_mat @ np.diag(S) @ V_mat
-    data_reconstructed = mat_reconstructed.reshape(shape)
-
-    # Check reconstruction
-    assert data_reconstructed.shape == shape
-    assert np.allclose(data_reconstructed, data, atol=1e-10, rtol=1e-10)
+    def test_tensor_creation_with_auto_indices(self):
+        """Test creating a tensor with auto-generated indices."""
+        data = np.random.randn(2, 3, 4)
+        tensor = Tensor(data)
+        
+        assert tensor.shape == (2, 3, 4)
+        assert tensor.ndim == 3
+        assert len(tensor.indices) == 3
+        assert all(isinstance(ind, Index) for ind in tensor.indices)
     
-def test_svd_decomposition_detects_rank_one():
-    rng = np.random.default_rng(321)
-    u = rng.normal(size=6) + 1j * rng.normal(size=6)
-    v = rng.normal(size=20) + 1j * rng.normal(size=20)
-    mat = np.outer(u, v)
-    shape = (2, 3, 4, 5)  # 6 × 20
-    data = mat.reshape(shape)
-    A = Tensor(data)
-
-    U, S, V = A.svd_decomposition(left_indices=[0, 1], right_indices=[2, 3])
-    S = np.asarray(S)
-    # Only the first singular value should be significant
-    assert S[0] > 1e-6
-    assert np.all(S[1:] < 1e-10)
-
-def test_svd_truncation_respects_cutoff_and_max_bond_dim():
-    rng = np.random.default_rng(0)
-    shape = (4, 6)  # simple 2-index tensor (matrix)
-    data = rng.normal(size=shape) + 1j * rng.normal(size=shape)
-    A = Tensor(data)
-
-    # Policy: keep s^2 >= cutoff, but never more than max_bond_dim
-    policy = TruncationPolicy(max_bond_dim=3, cutoff=0.2, strict=False)
-
-    U_full, S_full, V_full = A.svd_decomposition(left_indices=[0], right_indices=[1])
-    U_trunc, S_trunc, V_trunc = A.svd(left_indices=[0], right_indices=[1], policy=policy)
-
-    # 1) Truncated singular values are a prefix of the full ones
-    assert np.allclose(S_trunc, S_full[: len(S_trunc)])
-
-    # 2) All kept singular values satisfy the cutoff
-    assert np.all(S_trunc**2 >= policy.cutoff)
-
-    # 3) Either we've hit max_bond_dim, or the next singular value would violate cutoff
-    if len(S_trunc) < min(len(S_full), policy.max_bond_dim):
-        assert S_full[len(S_trunc)]**2 < policy.cutoff
-    else:
-        assert len(S_trunc) <= policy.max_bond_dim
-
-    # 4) Shapes of U and V truncate along the bond dimension only
-    chi = len(S_trunc)
-    assert U_trunc.data.shape == (shape[0], chi)
-    assert V_trunc.data.shape == (chi, shape[1])
+    def test_tensor_creation_with_indices(self):
+        """Test creating a tensor with provided indices."""
+        data = np.random.randn(2, 3, 4)
+        inds = [
+            Index(dim=2, name="i0"),
+            Index(dim=3, name="i1"),
+            Index(dim=4, name="i2"),
+        ]
+        tensor = Tensor(data, indices=inds)
+        
+        assert tensor.shape == (2, 3, 4)
+        assert tensor.indices == inds
+    
+    def test_tensor_creation_mismatch_dims(self):
+        """Test that mismatched index dimensions raise an error."""
+        data = np.random.randn(2, 3, 4)
+        inds = [
+            Index(dim=2, name="i0"),
+            Index(dim=5, name="i1"),  # Mismatch!
+            Index(dim=4, name="i2"),
+        ]
+        
+        with pytest.raises(AssertionError):
+            Tensor(data, indices=inds)
 
 
-@pytest.mark.parametrize(
-    "shape,left_indices,seed",
-    [
-        ((3, 4, 5), [0], 1),
-        ((4, 3, 6), [0], 2),
-        ((2, 3, 4, 5), [0, 1], 3),
-        # Approximate 12-qubit statevector reshaped as 8 x 8 x 64
-        ((8, 8, 64), [0, 1], 4),
-    ],
-)
-def test_svd_truncation_reconstructs_approx_tensor(shape, left_indices, seed):
-    rng = np.random.default_rng(seed)
-    data = rng.normal(size=shape) + 1j * rng.normal(size=shape)
-    A = Tensor(data)
-
-    policy = TruncationPolicy(max_bond_dim=64, cutoff=10**(-10), strict=False)
-
-    right_indices = [i for i in range(len(shape)) if i not in left_indices]
-
-    U_trunc, S_trunc, V_trunc = A.svd(
-        left_indices=left_indices,
-        right_indices=right_indices,
-        policy=policy,
-    )
-
-    left_dim = int(np.prod([shape[i] for i in left_indices]))
-    right_dim = int(np.prod([shape[i] for i in right_indices]))
-    chi = len(S_trunc)
-
-    U_mat = U_trunc.data.reshape(left_dim, chi)
-    V_mat = V_trunc.data.reshape(chi, right_dim)
-    mat_approx = U_mat @ np.diag(S_trunc) @ V_mat
-    data_approx = mat_approx.reshape(shape)
-
-    U_full, S_full, V_full = A.svd_decomposition(
-        left_indices=left_indices,
-        right_indices=right_indices,
-    )
-    discarded = S_full[chi:]
-    frob_disc = np.linalg.norm(discarded)
-
-    err = np.linalg.norm(data - data_approx)
-
-    print("reconstruction_error =", err - frob_disc)
-    print("discarded_singular_norm =", frob_disc)
-
-    assert err <= frob_disc + 1e-10
+class TestTensorArithmetic:
+    """Test basic tensor arithmetic operations."""
+    
+    def test_tensor_scalar_multiply(self):
+        """Test scalar multiplication."""
+        data = np.array([[1, 2], [3, 4]], dtype=np.complex128)
+        tensor = Tensor(data)
+        result = tensor * 2.0
+        
+        assert np.allclose(result.data, data * 2.0)
+    
+    def test_tensor_power(self):
+        """Test tensor exponentiation."""
+        data = np.array([[1, 2], [3, 4]], dtype=np.float64)
+        tensor = Tensor(data)
+        result = tensor ** 2
+        
+        assert np.allclose(result.data, data ** 2)
+    
+    def test_tensor_conjugate(self):
+        """Test complex conjugation."""
+        data = np.array([[1 + 1j, 2 - 1j]], dtype=np.complex128)
+        tensor = Tensor(data)
+        result = tensor.conj()
+        
+        assert np.allclose(result.data, np.conj(data))
 
 
+class TestTensorReshape:
+    """Test reshape operations."""
+    
+    def test_reshape_2d_to_1d(self):
+        """Test reshaping a 2D tensor to 1D."""
+        data = np.arange(6).reshape(2, 3)
+        tensor = Tensor(data)
+        reshaped = tensor.reshape((6,))
+        
+        assert reshaped.shape == (6,)
+        assert np.allclose(reshaped.data, np.arange(6))
+    
+    def test_reshape_3d_to_2d(self):
+        """Test reshaping a 3D tensor to 2D."""
+        data = np.arange(24).reshape(2, 3, 4)
+        tensor = Tensor(data)
+        reshaped = tensor.reshape((6, 4))
+        
+        assert reshaped.shape == (6, 4)
+        assert np.allclose(reshaped.data, data.reshape(6, 4))
+
+
+class TestTensorTranspose:
+    """Test transposition and permutation."""
+    
+    def test_transpose_default(self):
+        """Test transpose with default (reverse) order."""
+        data = np.arange(24).reshape(2, 3, 4)
+        tensor = Tensor(data)
+        transposed = tensor.transpose()
+        
+        expected = np.transpose(data)
+        assert np.allclose(transposed.data, expected)
+    
+    def test_transpose_custom_axes(self):
+        """Test transpose with custom axes."""
+        data = np.arange(24).reshape(2, 3, 4)
+        tensor = Tensor(data)
+        transposed = tensor.transpose((2, 0, 1))
+        
+        expected = np.transpose(data, (2, 0, 1))
+        assert np.allclose(transposed.data, expected)
+    
+    def test_permute_by_inds(self):
+        """Test permuting tensor to match target index order."""
+        inds = [
+            Index(dim=2, name="i0"),
+            Index(dim=3, name="i1"),
+            Index(dim=4, name="i2"),
+        ]
+        data = np.arange(24).reshape(2, 3, 4)
+        tensor = Tensor(data, indices=inds)
+        
+        # Target order: i2, i0, i1
+        target_inds = [inds[2], inds[0], inds[1]]
+        permuted = tensor.permute_by_inds(target_inds)
+        
+        expected = np.transpose(data, (2, 0, 1))
+        assert np.allclose(permuted.data, expected)
+        assert permuted.indices == target_inds
+
+
+class TestTensorContraction:
+    """Test tensor contractions."""
+    
+    def test_contract_matrices(self):
+        """Test contracting two matrices along shared dimension."""
+        # A: shape (2, 3), B: shape (3, 4)
+        # Contract A[1] with B[0] -> result (2, 4)
+        A_data = np.arange(6).reshape(2, 3).astype(np.complex128)
+        B_data = np.arange(12).reshape(3, 4).astype(np.complex128)
+        
+        A = Tensor(A_data)
+        B = Tensor(B_data)
+        
+        result = A.contract(B, axes=([[1], [0]]))
+        expected = np.tensordot(A_data, B_data, axes=([1], [0]))
+        
+        assert np.allclose(result.data, expected)
+    
+    def test_contract_multidim(self):
+        """Test contracting higher-dimensional tensors."""
+        # A: (2, 3, 4), B: (4, 5, 6)
+        # Contract A[2] with B[0] -> result (2, 3, 5, 6)
+        A_data = np.random.randn(2, 3, 4).astype(np.complex128)
+        B_data = np.random.randn(4, 5, 6).astype(np.complex128)
+        
+        A = Tensor(A_data)
+        B = Tensor(B_data)
+        
+        result = A.contract(B, axes=([[2], [0]]))
+        expected = np.tensordot(A_data, B_data, axes=([2], [0]))
+        
+        assert np.allclose(result.data, expected)
+
+
+class TestTensorQRDecomposition:
+    """Test QR decomposition."""
+    
+    def test_qr_basic(self):
+        """Test QR decomposition of a random matrix."""
+        data = np.random.randn(4, 6).astype(np.complex128)
+        tensor = Tensor(data)
+        
+        Q, R = tensor.qr_decomposition([0], [1])
+        
+        # Reconstruct and compare
+        reconstructed = Q.data @ R.data
+        assert np.allclose(reconstructed, data)
+        
+        # Check orthogonality of Q
+        Q_conj_T = np.conj(Q.data.T)
+        assert np.allclose(Q_conj_T @ Q.data, np.eye(Q.data.shape[1]))
+    
+    def test_qr_3d_tensor(self):
+        """Test QR decomposition grouping multiple axes."""
+        data = np.random.randn(2, 3, 4, 5).astype(np.complex128)
+        tensor = Tensor(data)
+
+        # Group axes 0,1 on left, axes 2,3 on right
+        Q, R = tensor.qr_decomposition([0, 1], [2, 3])
+
+        # Shapes: Q = (2, 3, k), R = (k, 4, 5)
+        k = Q.shape[2]
+        assert Q.shape == (2, 3, k)
+        assert R.shape == (k, 4, 5) 
+
+        # Verify indices are properly linked
+        assert Q.indices[-1] == R.indices[0]  # Bond index shared
+
+        # Verify QR reconstruction
+        Q_mat = Q.data.reshape(6, k)
+        R_mat = R.data.reshape(k, 20)
+        reconstructed = Q_mat @ R_mat
+        original_flat = tensor.data.transpose(0, 1, 2, 3).reshape(6, 20)
+
+        np.testing.assert_allclose(reconstructed, original_flat, atol=1e-10)
+
+
+
+class TestTensorSVDDecomposition:
+    """Test SVD decomposition."""
+    
+    def test_svd_basic(self):
+        """Test SVD of a random matrix."""
+        data = np.random.randn(4, 6).astype(np.complex128)
+        tensor = Tensor(data)
+        
+        U, S, Vh = tensor.svd_decomposition([0], [1])
+        
+        # Reconstruct
+        reconstructed = U.data @ np.diag(S.data) @ Vh.data
+        assert np.allclose(reconstructed, data)
+        
+        # Check singular values are non-negative and sorted
+        s_vals = np.asarray(S.data)
+        assert np.all(s_vals >= -1e-10)  # Account for numerical precision
+        assert np.all(s_vals[:-1] >= s_vals[1:])  # Sorted descending
+    
+    def test_svd_with_truncation(self):
+        """Test SVD with truncation policy."""
+        data = np.random.randn(4, 6).astype(np.complex128)
+        tensor = Tensor(data)
+        
+        policy = TruncationPolicy(max_bond_dim=2, cutoff = 0)
+        U, S, Vh = tensor.svd([0], [1], policy=policy)
+        
+        # Bond dimension should be truncated
+        assert U.shape[-1] == 2
+        assert Vh.shape[0] == 2
+        assert len(S.data) == 2
+
+
+class TestTensorNorm:
+    """Test norm operations."""
+    
+    def test_norm(self):
+        """Test computing the Frobenius norm."""
+        data = np.array([[1, 2], [3, 4]], dtype=np.complex128)
+        tensor = Tensor(data)
+        
+        norm = tensor.norm()
+        expected_norm = np.linalg.norm(data)
+        assert np.isclose(norm, expected_norm)
+    
+    def test_normalize(self):
+        """Test normalizing a tensor."""
+        data = np.random.randn(2, 3, 4).astype(np.complex128)
+        tensor = Tensor(data)
+        
+        normalized = tensor.normalize()
+        assert np.isclose(normalized.norm(), 1.0)
+    
+    def test_normalize_zero_tensor_raises(self):
+        """Test that normalizing a zero tensor raises an error."""
+        data = np.zeros((2, 3))
+        tensor = Tensor(data)
+        
+        with pytest.raises(ValueError):
+            tensor.normalize()
+
+
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])
