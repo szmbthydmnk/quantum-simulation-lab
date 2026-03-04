@@ -16,12 +16,12 @@
 ## v0.2 – State helpers and environments
 
 - [ ] Add helper functions for common quantum states:
-  - [ ] `zero_state(L, d=2)` and `basis_state(L, bits, d=2)` returning MPS.
+  - [x] `zero_state(L, d=2)` and `basis_state(L, bits, d=2)` returning MPS.
   - [ ] Simple entangled states for tests (e.g. Bell pair, GHZ).
 - [ ] Introduce an environment/config object:
   - [ ] System type (e.g. spin-1/2, spin-1, qudit).
   - [ ] System size `L`, local dimension `d`, boundary conditions.
-  - [ ] Bond dimension configuration (static and simple dynamic schedule).
+  - [x] Bond dimension configuration (static and simple dynamic schedule).
 - [ ] Tests validating shapes, norms, and basic config invariants.
 
 ## v0.3 – TEBD / iTEBD scaffolding
