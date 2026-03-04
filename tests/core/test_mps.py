@@ -9,6 +9,7 @@ from types import SimpleNamespace
 from tensor_network_library.core.mps import MPS
 from tensor_network_library.core.index import Index
 from tensor_network_library.core.tensor import Tensor
+from tensor_network_library.core.policy import TruncationPolicy
 from tensor_network_library.states.qubit_states import qubit_states
 
 def _kron_list(vecs: list[np.ndarray]) -> np.ndarray:
@@ -349,3 +350,156 @@ def test_from_qubit_labels_length_and_bond_dims():
     assert len(mps) == len(labels)
     assert mps.bond_dims == [1] * (len(labels) + 1)
     assert mps.physical_dims == [2] * len(labels)
+
+
+def _global_phase_equal(v: np.ndarray, w: np.ndarray, atol: float = 1e-12) -> bool:
+    v = np.asarray(v, dtype=np.complex128).reshape(-1)
+    w = np.asarray(w, dtype=np.complex128).reshape(-1)
+    if v.shape != w.shape:
+        return False
+    nv = np.linalg.norm(v)
+    nw = np.linalg.norm(w)
+    if nv == 0 or nw == 0:
+        return False
+    v = v / nv
+    w = w / nw
+
+    idx = int(np.argmax(np.abs(w)))
+    if np.abs(w[idx]) < atol:
+        return np.allclose(v, w, atol=atol, rtol=0)
+
+    phase = v[idx] / w[idx]
+    return np.allclose(v, phase * w, atol=atol, rtol=0)
+
+
+def _kron_all(vecs):
+    out = np.array([1.0 + 0.0j], dtype=np.complex128)
+    for v in vecs:
+        out = np.kron(out, np.asarray(v, dtype=np.complex128).reshape(-1))
+    return out
+
+
+# -------------------------
+# from_qubit_labels tests
+# -------------------------
+
+def test_from_qubit_labels_matches_dense_kron():
+    labels = ["0", "+", "i", "t3", "h7", "phi=pi/4"]
+    mps = MPS.from_qubit_labels(labels, name="psi")
+    dense = mps.to_dense()
+
+    expected = _kron_all(qubit_states(labels))
+    assert dense.shape == expected.shape
+    assert np.allclose(dense, expected, atol=1e-12, rtol=0)
+
+
+def test_from_qubit_labels_product_mps_has_bond_dim_1():
+    labels = ["0", "t0", "h0", "phi=pi/7"]
+    mps = MPS.from_qubit_labels(labels)
+    assert mps.bond_dims == [1] * (len(labels) + 1)
+    assert mps.physical_dims == [2] * len(labels)
+
+
+def test_from_qubit_labels_invalid_label_raises():
+    with pytest.raises(ValueError):
+        MPS.from_qubit_labels(["0", "not_a_state"])
+
+
+def test_from_qubit_labels_dtype_is_respected():
+    labels = ["0", "t0", "h0"]
+    mps = MPS.from_qubit_labels(labels, dtype=np.complex64)
+    dense = mps.to_dense()
+    assert dense.dtype == np.complex64
+
+
+# -------------------------
+# from_statevector tests
+# -------------------------
+
+def test_from_statevector_exact_roundtrip_up_to_global_phase():
+    rng = np.random.default_rng(0)
+    L = 5
+    psi = rng.normal(size=2**L) + 1j * rng.normal(size=2**L)
+    psi = psi / np.linalg.norm(psi)
+
+    mps = MPS.from_statevector(psi, physical_dims=2, truncation=None, name="svd_exact")
+    dense = mps.to_dense()
+
+    assert dense.shape == psi.shape
+    assert _global_phase_equal(dense, psi, atol=1e-10)
+    assert np.isclose(mps.norm(), 1.0, atol=1e-10, rtol=0)
+
+
+@pytest.mark.parametrize("absorb", ["right", "left", "sqrt"])
+def test_from_statevector_absorb_variants_agree(absorb):
+    rng = np.random.default_rng(1)
+    L = 4
+    psi = rng.normal(size=2**L) + 1j * rng.normal(size=2**L)
+    psi = psi / np.linalg.norm(psi)
+
+    mps = MPS.from_statevector(psi, physical_dims=2, truncation=None, absorb=absorb, name=f"abs_{absorb}")
+    dense = mps.to_dense()
+    assert _global_phase_equal(dense, psi, atol=1e-10)
+
+
+def test_from_statevector_with_dim_list():
+    rng = np.random.default_rng(2)
+    dims = [2, 3, 2]
+    n = int(np.prod(dims))
+    psi = rng.normal(size=n) + 1j * rng.normal(size=n)
+    psi = psi / np.linalg.norm(psi)
+
+    mps = MPS.from_statevector(psi, physical_dims=dims, truncation=None, name="hetero")
+    dense = mps.to_dense()
+    assert dense.shape == psi.shape
+    assert _global_phase_equal(dense, psi, atol=1e-10)
+
+
+def test_from_statevector_wrong_length_raises():
+    psi = np.ones(10, dtype=np.complex128)  # not a power of 2
+    with pytest.raises(ValueError):
+        MPS.from_statevector(psi, physical_dims=2)
+
+
+def test_from_statevector_truncation_respects_max_bond_dim():
+    rng = np.random.default_rng(3)
+    L = 8
+    psi = rng.normal(size=2**L) + 1j * rng.normal(size=2**L)
+    psi = psi / np.linalg.norm(psi)
+
+    policy = TruncationPolicy(max_bond_dim=4, cutoff=0.0, strict=False)
+    mps = MPS.from_statevector(psi, physical_dims=2, truncation=policy, name="trunc")
+
+    assert max(mps.bond_dims) <= policy.max_bond_dim
+    assert np.isclose(mps.norm(), 1.0, atol=1e-10, rtol=0)
+
+
+def test_from_statevector_strict_policy_raises_if_needed_more_than_max():
+    # Construct a state whose first cut has 4 equal nonzero singular values:
+    # |psi> = (1/2) * sum_{a=0..3} |a>_left |a>_right, with left/right being 2 qubits each.
+    psi_mat = np.eye(4, dtype=np.complex128) / 2.0  # Frobenius norm 1 -> state norm 1
+    psi = psi_mat.reshape(-1)
+
+    # cutoff=0 keeps all nonzero singular values (4), but max_bond_dim=2 => should raise in strict mode.
+    policy = TruncationPolicy(max_bond_dim=2, cutoff=0.0, strict=True)
+
+    with pytest.raises(ValueError):
+        MPS.from_statevector(psi, physical_dims=2, truncation=policy, name="strict_fail")
+
+
+def test_from_statevector_normalize_flag_controls_scaling():
+    rng = np.random.default_rng(4)
+    L = 4
+    psi = rng.normal(size=2**L) + 1j * rng.normal(size=2**L)
+    psi = psi / np.linalg.norm(psi)
+
+    scale = 3.7
+    psi2 = scale * psi
+
+    mps_normed = MPS.from_statevector(psi2, physical_dims=2, truncation=None, normalize=True, name="normed")
+    assert np.isclose(mps_normed.norm(), 1.0, atol=1e-10, rtol=0)
+
+    mps_raw = MPS.from_statevector(psi2, physical_dims=2, truncation=None, normalize=False, name="raw")
+    dense_raw = mps_raw.to_dense()
+    assert _global_phase_equal(dense_raw, psi2, atol=1e-10)
+    assert np.isclose(mps_raw.norm(), np.linalg.norm(psi2), atol=1e-8, rtol=1e-8)

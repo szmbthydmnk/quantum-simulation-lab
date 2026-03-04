@@ -222,6 +222,137 @@ class MPS:
 
         local_vecs = [np.asarray(v, dtype=dtype) for v in qubit_states(labels)]
         return cls.from_local_states(local_states=local_vecs, name=name, dtype=dtype)
+    
+
+    @classmethod
+    def from_statevector(cls,
+                          psi: np.ndarray,
+                          physical_dims: PhysDims = 2,
+                          *,
+                          name: str = "MPS",
+                          truncation: TruncationPolicy | None = None,
+                          absorb: str = "right",        #"right", "left", "sqrt"
+                          normalize: bool = True,
+                          dtype: np.dtype = np.complex128,
+                          ) -> "MPS":
+        """
+        Build an MPS from a dense statevector via succesive SVD.
+
+        If truncation is None: keep full rank at each cut (exact MPS)
+        If truncation is set: keep truncation.choose_bond_dim(S) at each cut.
+        """        
+
+        vec = np.asarray(psi, dtype = dtype).reshape(-1)
+        if vec.ndim != 1:
+            raise ValueError("Psi must be a 1D statevector")
+        if vec.size == 0:
+            raise ValueError("psi must be non-empty")
+        
+        n = np.linalg.norm(vec)
+        if n == 0:
+            raise ValueError("psi must be nonzero")
+        if normalize:
+            vec = vec / n
+
+        # Resolve physical dimension
+        if isinstance(physical_dims, int):
+            d = int(physical_dims)
+            if d <= 0:
+                raise ValueError("physical_dims must be positive")
+
+            n = vec.shape[0]
+            L = 0
+            tmp = n
+            while tmp > 1 and (tmp % d == 0):
+                tmp //= d
+                L += 1
+            if d**L != n:
+                raise ValueError("len(psi) is not a power of physical_dims")
+            dims = [d] * L
+        else:
+            dims = [int(x) for x in physical_dims]
+            if any(x <= 0 for x in dims):
+                raise ValueError("All physical dimensions must be positive")
+            n = int(np.prod(dims))
+            if vec.shape[0] != n:
+                raise ValueError("len(psi) does not match product of physical_dims")
+            
+        L = len(dims)
+
+        if L <= 0:
+            raise ValueError("Cannot build an MPS with L = 0")
+
+        absorb = str(absorb).lower()
+        if absorb not in {"right", "left", "sqrt"}:
+            raise ValueError("absorb must be one of {'right', 'left', 'sqrt'}")
+        
+        def choose_chi(S: np.ndarray) -> int:
+            chi_full = int(S.shape[0])
+            if truncation is None:
+                return chi_full
+            chi = int(truncation.choose_bond_dim(S))
+            if chi <= 0:
+                raise ValueError(
+                    "TruncationPolicy chose chi=0 (cutoff too large or state near-zero on this cut)."
+                )
+            return min(chi, chi_full)
+        
+
+        # Build indices
+        phys_ix = [
+            Index(dim=dims[i], name=f"{name}_phys_{i}", tags=frozenset({"phys", f"i={i}"}))
+            for i in range(L)
+        ]
+        bonds = [Index(dim=1, name=f"{name}_bond_0", tags=frozenset({"bond", "b=0"}))]
+
+        tensors: List[Tensor] = []
+        rem = vec
+        chi_left = 1
+
+        for i in range(L - 1):
+            di = dims[i]
+            rem = rem.reshape(chi_left * di, -1)
+
+            # SVD: singular values are sorted descending. [web:508]
+            U, S, Vh = np.linalg.svd(rem, full_matrices=False)
+
+            chi = choose_chi(S)
+            U = U[:, :chi]
+            S = S[:chi]
+            Vh = Vh[:chi, :]
+
+            bond = Index(dim=chi, name=f"{name}_bond_{i+1}", tags=frozenset({"bond", f"b={i+1}"}))
+            bonds.append(bond)
+
+            if absorb == "right":
+                A = U.reshape(chi_left, di, chi)
+                rem = (S[:, None] * Vh)              # diag(S) @ Vh
+            elif absorb == "left":
+                A = (U * S[None, :]).reshape(chi_left, di, chi)  # U @ diag(S)
+                rem = Vh
+            else:  # "sqrt"
+                s = np.sqrt(S)
+                A = (U * s[None, :]).reshape(chi_left, di, chi)
+                rem = (s[:, None] * Vh)
+
+            tensors.append(Tensor(A.astype(dtype, copy=False), indices=[bonds[i], phys_ix[i], bond]))
+            chi_left = chi
+
+        # Last site
+        last_d = dims[-1]
+        rem = rem.reshape(chi_left, last_d)
+        bonds.append(Index(dim=1, name=f"{name}_bond_{L}", tags=frozenset({"bond", f"b={L}"})))
+
+        A_last = rem.reshape(chi_left, last_d, 1)
+        tensors.append(
+            Tensor(A_last.astype(dtype, copy=False), indices=[bonds[L - 1], phys_ix[L - 1], bonds[L]])
+        )
+
+        mps = cls.from_tensors(tensors=tensors, name=name)
+        if normalize:
+            mps.normalize()
+        return mps
+            
 
     # -------------------------
     # Internal helpers
