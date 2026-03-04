@@ -225,3 +225,36 @@ def test_qubit_states_batch():
     for v in out:
         assert np.asarray(v).shape == (2,)
         assert np.isclose(np.linalg.norm(v), 1.0)
+
+
+def test_available_qubit_state_labels_are_callable():
+    labels = qs.available_qubit_state_labels()
+    assert isinstance(labels, list)
+    assert len(labels) > 0
+
+    for lab in labels:
+        v = qs.qubit_state(lab)
+        v = np.asarray(v)
+        assert v.shape == (2,)
+        assert np.iscomplexobj(v)
+        assert np.isclose(np.linalg.norm(v), 1.0)
+
+
+def test_print_available_qubit_states_lists_all_labels(capsys):
+    labels = qs.available_qubit_state_labels()
+    qs.print_available_qubit_states()
+
+    out = capsys.readouterr().out  # capture stdout [web:446][web:447]
+    assert "Available qubit state labels" in out
+
+    for lab in labels:
+        assert lab in out
+
+
+def test_available_qubit_state_labels_contains_expected_families():
+    labels = set(qs.available_qubit_state_labels())
+    assert {"0", "1", "+", "-", "i", "-i", "h+", "h-", "H"}.issubset(labels)
+    for k in range(8):
+        assert f"t{k}" in labels
+    for k in range(12):
+        assert f"h{k}" in labels

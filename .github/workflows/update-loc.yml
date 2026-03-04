@@ -4,8 +4,12 @@ on:
   push:
     branches:
       - main
-permissions: 
+    paths-ignore:
+      - "README.md"
+
+permissions:
   contents: write
+
 jobs:
   count-loc:
     runs-on: ubuntu-latest
@@ -15,12 +19,14 @@ jobs:
 
       - name: Count lines of code
         id: loc
+        shell: bash
         run: |
           # Count non-empty lines in tracked Python files
-          LOC=$(git ls-files '*.py' | xargs cat | sed '/^\s*$/d' | wc -l)
+          LOC=$(git ls-files '*.py' | xargs -r cat | sed '/^\s*$/d' | wc -l)
           echo "loc=$LOC" >> "$GITHUB_OUTPUT"
 
       - name: Update README with LOC
+        shell: bash
         run: |
           LOC=${{ steps.loc.outputs.loc }}
           tmpfile=$(mktemp)

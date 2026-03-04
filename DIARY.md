@@ -1,5 +1,13 @@
 # Development Diary
 
+## 2026-03-04 -- v0.1.6
+- Added qubit-state constructors and parsers in `tensor_network_library/states/qubit_states` (including Pauli eigenstates, Hadamard eigenstates, equator states, and magic state families).
+- Added user-facing helpers to list and print available qubit-state labels.
+- Integrated qubit states into `MPS` via `MPS.from_qubit_labels(...)` for easy product-state initialization.
+- Added `MPS.from_state_vector(...)` constructor using successive SVD with `TruncationPolicy` support (cutoff, `max_bond_dim`, and `strict` behavior), plus a compatibility alias `from_statevector`.
+- Added/extended pytest coverage for the new state helpers and MPS constructors.
+- Fixed CI LOC injection by adding README markers expected by the `update-loc` workflow.
+
 ## 2026-03-02 -- 2026-03-03 -- v0.1.5
 - Developed `index` in order to track contractions properly.
 - Updated `tensor` to accomodate the new indexing method.
@@ -39,5 +47,4 @@
   - `test_mpo.py` for MPO identity, dense conversion, and apply consistency.
 - Configured GitHub Actions CI (`.github/workflows/tests.yml`) to run `pytest` on pushes and PRs.
 - Created `core_development` branch and merged the initial core TN layer into `main` via PR #1.
-
 

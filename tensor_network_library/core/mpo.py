@@ -1,9 +1,16 @@
 """Matrix Product Operator (MPO) implementation."""
 
+from __future__ import annotations
+
 import numpy as np
+from numpy.typing import NDArray
+
 from typing import List
 from .tensor import Tensor
+from .index import Index
 from .mps import MPS
+
+ComplexArray = NDArray[np.complex128]
 
 class MPO:
     """
