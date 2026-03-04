@@ -226,6 +226,7 @@ def test_qubit_states_batch():
         assert np.asarray(v).shape == (2,)
         assert np.isclose(np.linalg.norm(v), 1.0)
 
+
 def test_available_qubit_state_labels_are_callable():
     labels = qs.available_qubit_state_labels()
     assert isinstance(labels, list)
