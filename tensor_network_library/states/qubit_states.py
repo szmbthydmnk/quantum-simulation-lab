@@ -7,6 +7,7 @@ import numpy as np
 import warnings
 import re
 
+
 def _norm(v: np.ndarray) -> np.ndarray:
     """
     Helper.
@@ -22,6 +23,7 @@ def _norm(v: np.ndarray) -> np.ndarray:
         warnings.warn("State vector norm is very small.", stacklevel=2)
     
     return v / n
+
 
 def _state_from_bloch(a: np.ndarray) -> np.ndarray:
     """
@@ -50,6 +52,7 @@ def _state_from_bloch(a: np.ndarray) -> np.ndarray:
     v = np.array([np.cos(theta / 2.0), np.exp(1j * phi) * np.sin(theta / 2.0)], dtype=np.complex128)
 
     return _norm(v)
+
 
 def _parse_angle(expr: str) -> float:
     """
@@ -144,6 +147,7 @@ def qubit_state(label: str) -> np.ndarray:
 
     raise ValueError(f"Unknown qubit state label: {label!r}")
     
+
 def qubit_pauli_eigenstates(key: str) -> np.ndarray :
     if key == "x+":
         return _norm(np.array([1.0, 1.0], dtype = np.complex128))
@@ -160,6 +164,7 @@ def qubit_pauli_eigenstates(key: str) -> np.ndarray :
     
     raise ValueError(f"Unknown qubit pauli egienstate: {key}")
 
+
 def qubit_hadamard_eigenstates(sign: str = '+') -> np.ndarray:
     # Eigenstates of H with eigenvalues plus or minus 1
     # |H+> = cos(pi/8)|0> + sin(pi/8)|1>
@@ -173,10 +178,12 @@ def qubit_hadamard_eigenstates(sign: str = '+') -> np.ndarray:
         return _norm(np.array([s, -c], dtype=np.complex128))
     raise ValueError(f"Unknown Hadamard sign: {sign!r}")
     
+
 def equator_state(phi: float) -> np.ndarray:
     # (|0> + e^{i phi} |1>) / sqrt(2)
     return _norm(np.array([1.0, np.exp(1j * phi)], dtype=np.complex128))
     
+
 def qubit_t_type_magic_states(k: int) -> np.ndarray:
     """
     8 T-type states: Bloch vectors at cube vertices (±1,±1,±1)/sqrt(3). [web:281]
@@ -191,6 +198,7 @@ def qubit_t_type_magic_states(k: int) -> np.ndarray:
 
     a = np.array([sx, sy, sz], dtype=float) / np.sqrt(3.0)
     return _state_from_bloch(a)
+
 
 def qubit_h_type_magic_states(k: int) -> np.ndarray:
     """
@@ -221,11 +229,40 @@ def qubit_h_type_magic_states(k: int) -> np.ndarray:
         raise ValueError(f"H-type index k must be in {{0,...,{len(vecs)-1}}}.")
     return _state_from_bloch(vecs[k])
 
+
 def qubit_max_magic_states(k: int) -> np.ndarray:
     """
     Alias for the 8 maximal-magic (T-type) qubit states.
     """
     return qubit_t_type_magic_states(k)
 
+
 def qubit_states(labels: Iterable[str]) -> list[np.ndarray]:
     return [qubit_state(x) for x in labels]
+
+
+# Put near the bottom of the module
+def available_qubit_state_labels() -> list[str]:
+    labels = []
+
+    # Pauli / common aliases
+    labels += ["0", "1", "+", "-", "i", "-i", "I", "-I"]
+
+    # Hadamard eigenstates (and your "H" alias)
+    labels += ["h+", "h-", "H+", "H-", "H"]
+
+    # T-type and H-type indexed families
+    labels += [f"t{k}" for k in range(8)]
+    labels += [f"h{k}" for k in range(12)]
+
+    # Equator syntax (examples, since it's infinite)
+    labels += ["phi=pi/4", "phi:pi/7"]
+
+    return labels
+
+
+def print_available_qubit_states() -> None:
+    labs = available_qubit_state_labels()
+    print("Available qubit state labels:")
+    for s in labs:
+        print(f"  {s}")
