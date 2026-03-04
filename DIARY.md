@@ -1,5 +1,12 @@
 # Development Diary
 
+## 2026-03-04 -- v0.1.6
+- Added state constrcutors for easy product state creation in `tensor_network_library/states/qubit_states`
+  - Added apropriate tests
+- Integrated qubit states into `mps`
+  - Added appropriate tests
+- Added classmethod that creates an MPS from a random statevector.
+
 ## 2026-03-02 -- 2026-03-03 -- v0.1.5
 - Developed `index` in order to track contractions properly.
 - Updated `tensor` to accomodate the new indexing method.
