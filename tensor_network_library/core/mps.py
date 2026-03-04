@@ -299,10 +299,7 @@ class MPS:
         
 
         # Build indices
-        phys_ix = [
-            Index(dim=dims[i], name=f"{name}_phys_{i}", tags=frozenset({"phys", f"i={i}"}))
-            for i in range(L)
-        ]
+        phys_ix = [Index(dim=dims[i], name=f"{name}_phys_{i}", tags=frozenset({"phys", f"i={i}"})) for i in range(L)]
         bonds = [Index(dim=1, name=f"{name}_bond_0", tags=frozenset({"bond", "b=0"}))]
 
         tensors: List[Tensor] = []
