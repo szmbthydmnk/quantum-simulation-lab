@@ -243,7 +243,7 @@ def qubit_states(labels: Iterable[str]) -> list[np.ndarray]:
 
 # Put near the bottom of the module
 def available_qubit_state_labels() -> list[str]:
-    labels = []
+    labels:list[str] = []
 
     # Pauli / common aliases
     labels += ["0", "1", "+", "-", "i", "-i", "I", "-I"]

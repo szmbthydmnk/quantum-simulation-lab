@@ -9,9 +9,16 @@ from types import SimpleNamespace
 from tensor_network_library.core.mps import MPS
 from tensor_network_library.core.index import Index
 from tensor_network_library.core.tensor import Tensor
-
+from tensor_network_library.states.qubit_states import qubit_states
 
 def _kron_list(vecs: list[np.ndarray]) -> np.ndarray:
+    out = np.array([1.0 + 0.0j], dtype=np.complex128)
+    for v in vecs:
+        out = np.kron(out, np.asarray(v, dtype=np.complex128).reshape(-1))
+    return out
+
+
+def _kron_all(vecs):
     out = np.array([1.0 + 0.0j], dtype=np.complex128)
     for v in vecs:
         out = np.kron(out, np.asarray(v, dtype=np.complex128).reshape(-1))
@@ -303,3 +310,42 @@ def test_initialize_entangled_bell_state_manual_bond_dim_2():
     expected = (np.kron([1, 0], [1, 0]) + np.kron([0, 1], [0, 1])).astype(np.complex128) / np.sqrt(2.0)
     np.testing.assert_allclose(mps.to_dense(), expected, atol=1e-12, rtol=1e-12)
     assert abs(mps.norm() - 1.0) < 1e-12
+
+
+def test_from_qubit_labels_matches_dense_kron():
+    labels = ["0", "+", "i", "t3", "h7", "phi=pi/4"]
+    mps = MPS.from_qubit_labels(labels, name="psi")
+
+    dense = mps.to_dense()
+    expected = _kron_all(qubit_states(labels))
+
+    assert dense.shape == expected.shape
+    assert np.allclose(dense, expected, atol=1e-12, rtol=0)
+
+
+def test_from_qubit_labels_norm_is_product_of_local_norms():
+    # from_local_states does not normalize the local vectors; it inserts them verbatim.
+    # qubit_states() returns normalized vectors, so the MPS norm should be 1.
+    labels = ["t0", "h0", "+", "1"]
+    mps = MPS.from_qubit_labels(labels)
+    assert np.isclose(mps.norm(), 1.0, atol=1e-12, rtol=0)
+
+
+def test_from_qubit_labels_dtype_is_respected():
+    labels = ["0", "t0", "h0"]
+    mps = MPS.from_qubit_labels(labels, dtype=np.complex64)
+    dense = mps.to_dense()
+    assert dense.dtype == np.complex64
+
+
+def test_from_qubit_labels_invalid_label_raises():
+    with pytest.raises(ValueError):
+        MPS.from_qubit_labels(["0", "definitely_not_a_state"])
+
+
+def test_from_qubit_labels_length_and_bond_dims():
+    labels = ["0", "+", "t0", "h0", "phi=pi/7"]
+    mps = MPS.from_qubit_labels(labels)
+    assert len(mps) == len(labels)
+    assert mps.bond_dims == [1] * (len(labels) + 1)
+    assert mps.physical_dims == [2] * len(labels)

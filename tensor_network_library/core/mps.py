@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import List, Union
+from typing import List, Union, Sequence
 import numpy as np
 
 from .tensor import Tensor
@@ -203,6 +203,25 @@ class MPS:
             mps.tensors[i].data[0, :, 0] = v
 
         return mps
+
+    
+    @classmethod
+    def from_qubit_labels(cls,
+                          labels: Sequence[str],
+                          *,
+                          name: str = "MPS",
+                          dtype: np.dtype = np.complex128
+                          ) -> "MPS":
+        """
+        Build a product-state MPS from 1-qubit labels like:
+        ["0", "+", "i", "t3", "h7", "phi=pi/4"].
+        """
+
+        # Local import to avoid making core depend on "states" at import time
+        from tensor_network_library.states.qubit_states import qubit_states
+
+        local_vecs = [np.asarray(v, dtype=dtype) for v in qubit_states(labels)]
+        return cls.from_local_states(local_states=local_vecs, name=name, dtype=dtype)
 
     # -------------------------
     # Internal helpers
