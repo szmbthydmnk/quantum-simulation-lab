@@ -92,6 +92,7 @@ class MPS:
         # Create unmaterialized site tensors
         self._create_empty_tensors()
 
+
     # -------------------------
     # Constructors / factories
     # -------------------------
@@ -125,6 +126,7 @@ class MPS:
                 break
 
         return obj
+
 
     @classmethod
     def from_product_state(
@@ -161,6 +163,7 @@ class MPS:
             mps.tensors[i].data[0, s, 0] = 1.0
 
         return mps
+
 
     @classmethod
     def from_local_states(
@@ -369,6 +372,7 @@ class MPS:
             raise ValueError("All physical dimensions must be positive")
         return dims
 
+
     def _resolve_bond_dims(
         self,
         bond_policy: BondPolicy,
@@ -422,6 +426,7 @@ class MPS:
 
         raise ValueError(f"Unknown bond_policy: {bond_policy!r}")
 
+
     def _create_empty_tensors(self) -> None:
         """Create site tensors with indices [bond_left, physical, bond_right] and data=None."""
         self.tensors = []
@@ -429,10 +434,12 @@ class MPS:
             inds = [self.bonds[i], self.indices[i], self.bonds[i + 1]]
             self.tensors.append(Tensor(None, indices=inds))
 
+
     def _assert_materialized(self) -> None:
         for i, t in enumerate(self.tensors):
             if t.data is None:
                 raise ValueError(f"MPS tensor at site {i} has data=None (unmaterialized MPS)")
+
 
     # -------------------------
     # Python protocol
@@ -441,8 +448,10 @@ class MPS:
     def __len__(self) -> int:
         return self.L
 
+
     def __repr__(self) -> str:
         return f"MPS(L={self.L}, phys_dims={self.physical_dims}, bond_dims={self.bond_dims})"
+
 
     # -------------------------
     # Basic properties
@@ -453,10 +462,12 @@ class MPS:
         """Bond dimensions between sites (including boundaries), length L+1."""
         return [b.dim for b in self.bonds]
 
+
     @property
     def physical_dims(self) -> List[int]:
         """Physical dimension at each site, length L."""
         return [p.dim for p in self.indices]
+
 
     # -------------------------
     # Core linear-algebra helpers
@@ -480,6 +491,7 @@ class MPS:
 
         return float(np.sqrt(np.abs(np.trace(overlap))))
 
+
     def normalize(self) -> "MPS":
         """
         Normalize the MPS in-place so that ⟨ψ|ψ⟩ = 1.
@@ -494,9 +506,6 @@ class MPS:
             self.tensors[0] = self.tensors[0] * (1.0 / nrm)
         return self
 
-    def copy(self) -> "MPS":
-        """Creates a deep copy of the MPS."""
-        return MPS.from_tensors(self.tensors, name=self.name)
 
     def to_dense(self) -> np.ndarray:
         """
@@ -513,3 +522,11 @@ class MPS:
 
         psi = np.squeeze(psi)
         return psi.reshape(-1)
+
+    # -------------------------
+    # External Helpers
+    # -------------------------
+
+    def copy(self) -> "MPS":
+        """Creates a deep copy of the MPS."""
+        return MPS.from_tensors(self.tensors, name=self.name)
