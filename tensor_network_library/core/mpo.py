@@ -48,7 +48,7 @@ class MPO:
         
         Args:
             L: Chain lengths
-            d: Physical dimesnion
+            d: Physical dimension
             bond_policy:
                 - "deafult": [1, 2, 2, ..., 2, 1]
                 - int: uniform bond dimension
@@ -197,7 +197,7 @@ class MPO:
         Apply this MPO to an MPS: returns a new MPS representing: $$\hat{O}\ket{\Psi}$$
         
         The result has a "super-bond" dimension, the product of the MPS and MPO.
-        Requires identical physical dimesnions.
+        Requires identical physical dimensions.
 
         Args:
             mps: Input MPS
@@ -213,14 +213,14 @@ class MPO:
         
         if self.physical_dims != mps.physical_dims:
             raise ValueError(
-                f"Physical dimesnion mismatch: MPO has {self.physical_dims}, "
+                f"Physical dimension mismatch: MPO has {self.physical_dims}, "
                 f"MPS has {mps.physical_dims}."
             )
         
         new_tensors = []
         
         # Using Schölwock's notation here for readability:
-        for i, (W, M) in enumarate(zip(self.tensors, mps.tensors)):
+        for i, (W, M) in enumerate(zip(self.tensors, mps.tensors)):
             w_left, d_in, d_out, w_right = W.shape
             m_left, d_mps, m_right = M.shape
             
@@ -258,7 +258,8 @@ class MPO:
                 new_data, indices = [left_super_index, physical_index, right_super_index]
             ))
     
-        return MPS(new_tensors)
+        return MPS.from_tensors(new_tensors, name="MPO_applied")
+
     
 
     def to_dense(self) -> np.ndarray:
