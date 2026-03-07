@@ -44,9 +44,3 @@ def left_canonicalize(mps: MPS, policy: Optional[TruncationPolicy] = None) -> MP
         mps.tensors[i + 1] = temp
     
     return mps
-        
-        
-        
-        
-    
-    

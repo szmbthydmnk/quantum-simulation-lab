@@ -35,7 +35,4 @@ class TruncationPolicy:
             return self.max_bond_dim
 
         return keep_tol
-        
-                
-                
-                
+                 
