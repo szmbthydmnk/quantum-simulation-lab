@@ -14,4 +14,3 @@ class Environment:
     bc: boundary_condition = "open"     # boundary condition
     max_bond_dim: int = 64              # I don't want to have a dynamical bond dimension in this build yet.
     complex_dtype: type = complex       #
-
