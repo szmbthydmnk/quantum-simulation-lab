@@ -194,7 +194,7 @@ class MPO:
     
     def apply(self, mps: MPS) -> 'MPS':
         """
-        Apply this MPO to an MPS: returns a new MPS representing: $$\hat{O}\ket{\Psi}$$
+        Apply this MPO to an MPS: returns a new MPS representing: hat{O} ket{Psi}
         
         The result has a "super-bond" dimension, the product of the MPS and MPO.
         Requires identical physical dimensions.
@@ -203,7 +203,7 @@ class MPO:
             mps: Input MPS
 
         Returns:
-            New MPS representing O|\psi>
+            New MPS representing O|psi>
         """
 
         if len(self) != len(mps):
