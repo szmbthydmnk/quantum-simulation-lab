@@ -29,24 +29,6 @@ ComplexArray = NDArray[np.complex128]
 
 
 # ---------------------------------------------------------------------------
-# Internal FSM helper
-# ---------------------------------------------------------------------------
-
-def _set_fsm_tensor(
-    W: np.ndarray,
-    row: int,
-    col: int,
-    op: ComplexArray,
-) -> None:
-    """
-    Set W[row, :, :, col] = op.
-
-    W has shape (chi_left, d, d, chi_right).
-    """
-    W[row, :, :, col] = op
-
-
-# ---------------------------------------------------------------------------
 # Transverse-Field Ising Model (TFIM)
 # ---------------------------------------------------------------------------
 
@@ -63,9 +45,9 @@ def tfim_mpo(
 
     Bond dimension: chi = 3 for all internal bonds.
     FSM row/col encoding:
-        0: identity pass-through (right edge)
-        1: σ_z  (left operator of ZZ term, waiting for right partner)
-        2: identity pass-through (left edge / accumulator)
+        0: done (right vacuum)
+        1: σ_z dangling (waiting for right ZZ partner)
+        2: identity pass-through (left vacuum)
 
     Args:
         L: Chain length (must be >= 2).
@@ -91,21 +73,16 @@ def tfim_mpo(
     for i in range(L):
         W = np.zeros((bond_dims[i], d, d, bond_dims[i + 1]), dtype=dtype)
 
-        if L == 1:
-            W[0, :, :, 0] = -g * Sx
-
-        elif i == 0:
+        if i == 0:
             # Left boundary: shape (1, d, d, 3)
             W[0, :, :, 2] = I
             W[0, :, :, 1] = -J * Sz
             W[0, :, :, 0] = -g * Sx
-
         elif i == L - 1:
             # Right boundary: shape (3, d, d, 1)
             W[2, :, :, 0] = -g * Sx
             W[1, :, :, 0] = Sz
             W[0, :, :, 0] = I
-
         else:
             # Bulk: shape (3, d, d, 3)
             W[2, :, :, 2] = I
@@ -139,16 +116,13 @@ def heisenberg_mpo(
                 + Jz σ_z^i σ_z^{i+1} )
           - h Σ_i σ_z^i
 
-    Setting Jx=Jy=Jz=J gives the isotropic Heisenberg (XXX) model.
-    Setting Jx=Jy=J, Jz=Delta gives the XXZ model.
-
     Bond dimension: chi = 5 for all internal bonds.
     FSM encoding (5 states):
-        0: I  accumulator (left edge)
-        1: Sz  (waiting for right Sz partner)
-        2: Sy  (waiting for right Sy partner)
-        3: Sx  (waiting for right Sx partner)
-        4: I  pass-through (right edge)
+        0: done (right vacuum)
+        1: Sz dangling
+        2: Sy dangling
+        3: Sx dangling
+        4: identity pass-through (left vacuum)
 
     Args:
         L:  Chain length (must be >= 2).
@@ -183,14 +157,12 @@ def heisenberg_mpo(
             W[0, :, :, 2] = Jy * Sy
             W[0, :, :, 1] = Jz * Sz
             W[0, :, :, 0] = -h * Sz
-
         elif i == L - 1:
             W[4, :, :, 0] = -h * Sz
             W[3, :, :, 0] = Sx
             W[2, :, :, 0] = Sy
             W[1, :, :, 0] = Sz
             W[0, :, :, 0] = I
-
         else:
             W[4, :, :, 4] = I
             W[4, :, :, 3] = Jx * Sx
@@ -221,21 +193,18 @@ def xx_model_mpo(
 
         H = J Σ_i ( σ_x^i σ_x^{i+1} + σ_y^i σ_y^{i+1} )
 
-    This is the Heisenberg model with Jx=Jy=J, Jz=0, h=0.
+    Thin wrapper over heisenberg_mpo with Jx=Jy=J, Jz=0, h=0.
 
     Args:
         L: Chain length.
         J: Hopping/coupling strength.
         dtype: Tensor dtype.
-
-    Returns:
-        MPO for the XX Hamiltonian.
     """
     return heisenberg_mpo(L=L, Jx=J, Jy=J, Jz=0.0, h=0.0, dtype=dtype)
 
 
 # ---------------------------------------------------------------------------
-# Free longitudinal field
+# Uniform single-site field
 # ---------------------------------------------------------------------------
 
 def field_mpo(
@@ -249,7 +218,15 @@ def field_mpo(
 
         H = -h Σ_i σ_direction^i
 
-    No nearest-neighbour coupling; bond dimension = 1.
+    Uses a chi=2 FSM so that site contributions are summed, not multiplied.
+
+    FSM bond states:
+        0: done (accumulated all terms to the left)
+        1: still passing identity (no field term emitted yet at this site or later)
+
+    Left boundary  (1, d, d, 2): W[0,:,:,1] = I,   W[0,:,:,0] = -h*op
+    Bulk           (2, d, d, 2): W[1,:,:,1] = I,   W[1,:,:,0] = -h*op,  W[0,:,:,0] = I
+    Right boundary (2, d, d, 1): W[1,:,:,0] = -h*op,  W[0,:,:,0] = I
 
     Args:
         L:         Chain length.
@@ -264,14 +241,33 @@ def field_mpo(
     ops = {"x": sigma_x, "y": sigma_y, "z": sigma_z}
     if direction not in ops:
         raise ValueError(f"direction must be 'x', 'y', or 'z', got {direction!r}")
-    op = -h * ops[direction](dtype)
 
-    bond_dims = [1] * (L + 1)
+    op = -h * ops[direction](dtype)
+    I  = identity(d, dtype)
+
+    chi = 2
+    bond_dims = [1] + [chi] * (L - 1) + [1]
     mpo = MPO(L=L, d=d, bond_policy=bond_dims, dtype=dtype)
+
     for i in range(L):
-        W = np.zeros((1, d, d, 1), dtype=dtype)
-        W[0, :, :, 0] = op
+        W = np.zeros((bond_dims[i], d, d, bond_dims[i + 1]), dtype=dtype)
+
+        if i == 0:
+            # Left boundary: shape (1, d, d, 2)
+            W[0, :, :, 1] = I
+            W[0, :, :, 0] = op
+        elif i == L - 1:
+            # Right boundary: shape (2, d, d, 1)
+            W[1, :, :, 0] = op
+            W[0, :, :, 0] = I
+        else:
+            # Bulk: shape (2, d, d, 2)
+            W[1, :, :, 1] = I
+            W[1, :, :, 0] = op
+            W[0, :, :, 0] = I
+
         mpo.tensors[i].data = W
+
     return mpo
 
 
@@ -291,15 +287,11 @@ def tfim_dense(
     """
     from .operators import embed_operator, embed_two_site_operator, zz
 
-    dim = 2 ** L
-    H = np.zeros((dim, dim), dtype=dtype)
-
+    H = np.zeros((2**L, 2**L), dtype=dtype)
     for i in range(L - 1):
         H -= J * embed_two_site_operator(zz(dtype), site=i, L=L, d=2, dtype=dtype)
-
     for i in range(L):
         H -= g * embed_operator(sigma_x(dtype), site=i, L=L, d=2, dtype=dtype)
-
     return H
 
 
@@ -317,15 +309,11 @@ def heisenberg_dense(
     """
     from .operators import embed_operator, embed_two_site_operator, xx, yy, zz
 
-    dim = 2 ** L
-    H = np.zeros((dim, dim), dtype=dtype)
-
+    H = np.zeros((2**L, 2**L), dtype=dtype)
     for i in range(L - 1):
         H += Jx * embed_two_site_operator(xx(dtype), site=i, L=L, d=2, dtype=dtype)
         H += Jy * embed_two_site_operator(yy(dtype), site=i, L=L, d=2, dtype=dtype)
         H += Jz * embed_two_site_operator(zz(dtype), site=i, L=L, d=2, dtype=dtype)
-
     for i in range(L):
         H -= h * embed_operator(sigma_z(dtype), site=i, L=L, d=2, dtype=dtype)
-
     return H
