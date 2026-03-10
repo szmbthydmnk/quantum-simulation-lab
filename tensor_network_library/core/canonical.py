@@ -13,10 +13,27 @@ Axis convention per site tensor:
 from __future__ import annotations
 
 from typing import Optional
+"""Canonical form transformations for MPS.
+
+Provides left-, right-, and mixed-canonicalization routines.
+All routines operate on a copy of the input MPS and return the
+canonicalized version; the original is not modified.
+
+Axis convention per site tensor:
+    axis 0 : left bond  (chi_left)
+    axis 1 : physical   (d)
+    axis 2 : right bond (chi_right)
+"""
+
+from __future__ import annotations
+
+from typing import Optional
 
 import numpy as np
 
+
 from .mps import MPS
+from .policy import TruncationPolicy
 from .policy import TruncationPolicy
 from .tensor import Tensor
 from .index import Index
