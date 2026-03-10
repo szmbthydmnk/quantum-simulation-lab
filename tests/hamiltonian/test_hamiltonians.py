@@ -187,9 +187,9 @@ class TestFieldMPO:
         )
         np.testing.assert_allclose(H, H_ref, atol=1e-12)
 
-    def test_field_bond_dim_is_1(self):
+    def test_field_bond_dim_is_2(self):
         mpo = field_mpo(L=4, h=1.0)
-        assert mpo.bond_dims == [1, 1, 1, 1, 1]
+        assert mpo.bond_dims == [1, 2, 2, 2, 1]
 
     def test_field_invalid_direction_raises(self):
         with pytest.raises(ValueError):
