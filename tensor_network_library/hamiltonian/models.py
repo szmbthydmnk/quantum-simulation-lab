@@ -22,7 +22,7 @@ from typing import Optional
 import numpy as np
 from numpy.typing import NDArray
 
-from .mpo import MPO
+from ..core.mpo import MPO
 from .operators import sigma_x, sigma_y, sigma_z, identity
 
 ComplexArray = NDArray[np.complex128]
@@ -67,13 +67,6 @@ def tfim_mpo(
         1: σ_z  (left operator of ZZ term, waiting for right partner)
         2: identity pass-through (left edge / accumulator)
 
-    So W has shape (3, d, d, 3):
-        W[2, :, :, 2] = I          (pass identity through middle)
-        W[2, :, :, 1] = -J * σ_z  (start a ZZ term)
-        W[2, :, :, 0] = -g * σ_x  (on-site transverse field)
-        W[1, :, :, 0] = σ_z       (complete ZZ term)
-        W[0, :, :, 0] = I         (pass identity to the left)
-
     Args:
         L: Chain length (must be >= 2).
         J: ZZ coupling strength.
@@ -98,23 +91,17 @@ def tfim_mpo(
     for i in range(L):
         W = np.zeros((bond_dims[i], d, d, bond_dims[i + 1]), dtype=dtype)
 
-        left_dim  = bond_dims[i]    # 1 at i=0, else 3
-        right_dim = bond_dims[i+1]  # 3 at i<L-1, else 1
-
         if L == 1:
-            # Edge case: single-site chain (only transverse field)
             W[0, :, :, 0] = -g * Sx
 
         elif i == 0:
             # Left boundary: shape (1, d, d, 3)
-            # Row 0 (only row): emit I, -J*Sz, -g*Sx into cols 2, 1, 0
             W[0, :, :, 2] = I
             W[0, :, :, 1] = -J * Sz
             W[0, :, :, 0] = -g * Sx
 
         elif i == L - 1:
             # Right boundary: shape (3, d, d, 1)
-            # Col 0 (only col): receive from rows 2, 1, 0
             W[2, :, :, 0] = -g * Sx
             W[1, :, :, 0] = Sz
             W[0, :, :, 0] = I
@@ -191,7 +178,6 @@ def heisenberg_mpo(
         W = np.zeros((bond_dims[i], d, d, bond_dims[i + 1]), dtype=dtype)
 
         if i == 0:
-            # Left boundary: shape (1, d, d, 5)
             W[0, :, :, 4] = I
             W[0, :, :, 3] = Jx * Sx
             W[0, :, :, 2] = Jy * Sy
@@ -199,7 +185,6 @@ def heisenberg_mpo(
             W[0, :, :, 0] = -h * Sz
 
         elif i == L - 1:
-            # Right boundary: shape (5, d, d, 1)
             W[4, :, :, 0] = -h * Sz
             W[3, :, :, 0] = Sx
             W[2, :, :, 0] = Sy
@@ -207,7 +192,6 @@ def heisenberg_mpo(
             W[0, :, :, 0] = I
 
         else:
-            # Bulk: shape (5, d, d, 5)
             W[4, :, :, 4] = I
             W[4, :, :, 3] = Jx * Sx
             W[4, :, :, 2] = Jy * Sy
@@ -238,8 +222,6 @@ def xx_model_mpo(
         H = J Σ_i ( σ_x^i σ_x^{i+1} + σ_y^i σ_y^{i+1} )
 
     This is the Heisenberg model with Jx=Jy=J, Jz=0, h=0.
-
-    Bond dimension: chi = 4.
 
     Args:
         L: Chain length.
@@ -305,28 +287,16 @@ def tfim_dense(
 ) -> ComplexArray:
     """
     Build the TFIM Hamiltonian as a dense (d^L, d^L) matrix.
-
     Intended for validation against tfim_mpo().to_dense() for small L.
-
-    Args:
-        L: Chain length.
-        J: ZZ coupling.
-        g: Transverse field.
-        dtype: Output dtype.
-
-    Returns:
-        Dense Hamiltonian matrix of shape (2^L, 2^L).
     """
     from .operators import embed_operator, embed_two_site_operator, zz
 
     dim = 2 ** L
     H = np.zeros((dim, dim), dtype=dtype)
 
-    # ZZ terms
     for i in range(L - 1):
         H -= J * embed_two_site_operator(zz(dtype), site=i, L=L, d=2, dtype=dtype)
 
-    # Transverse field terms
     for i in range(L):
         H -= g * embed_operator(sigma_x(dtype), site=i, L=L, d=2, dtype=dtype)
 
@@ -343,19 +313,7 @@ def heisenberg_dense(
 ) -> ComplexArray:
     """
     Build the Heisenberg Hamiltonian as a dense (d^L, d^L) matrix.
-
     Intended for validation against heisenberg_mpo().to_dense() for small L.
-
-    Args:
-        L:  Chain length.
-        Jx: XX coupling.
-        Jy: YY coupling.
-        Jz: ZZ coupling.
-        h:  Longitudinal field.
-        dtype: Output dtype.
-
-    Returns:
-        Dense Hamiltonian matrix of shape (2^L, 2^L).
     """
     from .operators import embed_operator, embed_two_site_operator, xx, yy, zz
 
