@@ -15,7 +15,7 @@ from __future__ import annotations
 from typing import Optional, Tuple, List
 
 import numpy as np
-from scipy.linalg import eigsh
+from scipy.linalg import eigh
 
 from ..core.tensor import Tensor
 from ..core.mps import MPS
