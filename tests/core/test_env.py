@@ -59,7 +59,7 @@ class TestEnvironmentFactories:
 
 class TestEnvironmentEffectiveTruncation:
     def test_uses_explicit_truncation_first(self):
-        trunc = TruncationPolicy(chi_max=32)
+        trunc = TruncationPolicy(max_bond_dim=32)
         env = Environment(L=4, d=2, truncation=trunc)
         assert env.effective_truncation is trunc
 
