@@ -41,11 +41,7 @@ if str(_REPO_ROOT) not in sys.path:
 from tensor_network_library.core.env import Environment
 from tensor_network_library.core.mps import MPS
 from tensor_network_library.core.utils import expectation_value_env
-from tensor_network_library.algorithms.dmrg import (
-    DMRGConfig,
-    finite_dmrg_onesite,
-    finite_dmrg_twosite,
-)
+from tensor_network_library.algorithms.dmrg import DMRGConfig, finite_dmrg
 from tensor_network_library.hamiltonian.models import random_field_mpo
 from tensor_network_library.hamiltonian.operators import sigma_x, embed_operator
 
@@ -60,7 +56,6 @@ MEAN       = 1.0
 VAR        = 0.1
 SEED       = 7
 INIT_SEED  = 99
-USE_TWOSITE = True  # flip to False to compare 1-site vs 2-site
 
 OUT_DIR = pathlib.Path(__file__).parent / "results"
 OUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -98,13 +93,7 @@ def main() -> None:
 
     env    = Environment.qubit_chain(L=L, chi_max=CHI_MAX)
     config = DMRGConfig(max_sweeps=MAX_SWEEPS, energy_tol=ENERGY_TOL, verbose=True)
-
-    if USE_TWOSITE:
-        print("[H2] Using 2-site DMRG")
-        result = finite_dmrg_twosite(env, mpo, mps0, config)
-    else:
-        print("[H2] Using 1-site DMRG")
-        result = finite_dmrg_onesite(env, mpo, mps0, config)
+    result = finite_dmrg(env, mpo, mps0, config)
 
     energies  = np.array(result.energies)
     max_bonds = np.array([max(bd) for bd in result.bond_dims])
