@@ -36,12 +36,12 @@ from examples.dmrg_hamiltonians import zz_plus_z_mpo
 # ---------------------------------------------------------------------------
 # Parameters  — edit freely
 # ---------------------------------------------------------------------------
-L          = 20
+L          = 10
 CHI_MAX    = 32
 MAX_SWEEPS = 20
 ENERGY_TOL = 1e-10
 JZ         = 1.0
-H_FIELD    = 0.5
+H_FIELD    = 1.0
 INIT_SEED  = 11
 
 OUT_DIR = pathlib.Path(__file__).parent / "results"
@@ -99,16 +99,14 @@ def main() -> None:
     ax.set_ylabel("Energy")
     ax.set_title(r"H3 = $J_z \sum Z_i Z_{i+1} - h \sum Z_i$ — energy vs sweep")
     ax.legend()
-    ax.grid(True, alpha=0.4)
-
+    ax.grid(True, alpha=0.4) 
     ax2 = axes[1]
     err = np.clip(np.abs(energies.real - E_exact), 1e-16, None)
     ax2.semilogy(sweeps, err, marker="s", color="darkorange")
     ax2.set_xlabel("Sweep")
     ax2.set_ylabel(r"$|E_{\rm DMRG} - E_{\rm exact}|$")
     ax2.set_title("Energy error (log scale)")
-    ax2.grid(True, alpha=0.4)
-
+    ax2.grid(True, alpha=0.4)    
     fig.tight_layout()
     plot_path = OUT_DIR / "H3_energy_convergence.png"
     fig.savefig(plot_path, dpi=150)
