@@ -32,9 +32,9 @@ if str(_REPO_ROOT) not in sys.path:
 
 from tensor_network_library.core.env import Environment
 from tensor_network_library.core.mps import MPS
-from tensor_network_library.core.mpo import MPO
 from tensor_network_library.core.utils import expectation_value_env
-from tensor_network_library.algorithms.dmrg import finite_dmrg, DMRGConfig
+from tensor_network_library.algorithms.dmrg import DMRGConfig, finite_dmrg
+from tensor_network_library.hamiltonian.models import random_field_mpo
 from tensor_network_library.hamiltonian.operators import sigma_z, embed_operator
 
 # ---------------------------------------------------------------------------
@@ -69,11 +69,8 @@ def main() -> None:
     print(f"[H1] L={L}  chi_max={CHI_MAX}")
     print(f"[H1] J = {np.round(J, 4)}")
 
-    # Build MPO
-    Z   = sigma_z()
-    mpo = MPO.identity_mpo(L=L, d=2, dtype=np.complex128)
-    for j in range(L):
-        mpo.initialize_single_site_operator(J[j] * Z, site=j)
+    # Correct MPO: Σ_j J_j Z_j as a sum, not a product.
+    mpo = random_field_mpo(L=L, coefficients=J, direction="z")
 
     # Exact reference
     evals, _ = np.linalg.eigh(dense_h1(L, J))
@@ -81,8 +78,6 @@ def main() -> None:
     print(f"[H1] Exact ground-state energy: {E_exact:.12f}")
 
     # Initial MPS: random bond-chi_max state to avoid zero-energy subspaces.
-    # H1 is diagonal in the Z basis so any random state has non-zero overlap
-    # with the ground state.
     mps0 = MPS.from_random(L=L, chi_max=CHI_MAX, physical_dims=2, seed=INIT_SEED)
     print(f"[H1] Initial MPS: {mps0}")
     print(f"[H1] Initial energy: {expectation_value_env(mps0, mpo):.12f}")
