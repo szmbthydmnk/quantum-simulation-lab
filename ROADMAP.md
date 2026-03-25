@@ -8,7 +8,7 @@
 - [x] `MPO` class with identity, apply-to-MPS, and dense conversion.
 - [x] Unit tests for Tensor, MPS, and MPO.
 - [x] GitHub Actions CI running `pytest` on pushes and PRs.
-- [ ] Add left-, right-, and mixed-canonicalization routines.
+- [x] Add left-, right-, and mixed-canonicalization routines.
 - [x] QR decomposition method in `Tensor`.
 - [x] SVD decomposition without truncation.
 - [x] SVD-based MPS constructor from dense statevector with `TruncationPolicy` (cutoff + `max_bond_dim`).
