@@ -20,12 +20,12 @@ using Random, LinearAlgebra, DelimitedFiles
 # ---------------------------------------------------------------------------
 # Parameters  (match run_dmrg.py)
 # ---------------------------------------------------------------------------
-const L          = 20
+const L          = 10
 const CHI_MAX    = 32
 const JZ         = 1.0
-const H_FIELD    = 0.5
+const H_FIELD    = 1.0
 const INIT_SEED  = 11
-const MAX_SWEEPS = 20
+const MAX_SWEEPS = 2
 const ENERGY_TOL = 1e-10
 
 OUT_DIR = joinpath(@__DIR__, "results")
