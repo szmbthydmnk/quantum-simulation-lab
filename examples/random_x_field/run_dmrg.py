@@ -2,20 +2,23 @@
 
 H2 = sum_j J_j X_j   with J_j ~ N(mean=MEAN, std=sqrt(VAR))
 
-The ground state of H2 is the product state |-> ^L (assuming J_j > 0).
-It is exactly representable at bond dimension 1.  The exact energy is
-    E_exact = -sum_j J_j.
+Physics
+-------
+H2 is a sum of single-site X operators.  The ground state is the
+product state |->^L (for all J_j > 0) with energy E = -sum_j J_j.
+Because the ground state is a product state, chi=1 is sufficient.
+We use chi_max=4 to demonstrate that the algorithm works at higher
+bond dimensions too (the extra dimensions simply optimise to zero).
 
 Initial guess
 -------------
-We start from |+>^L = (|0> + |1>)^L / 2^{L/2}.  This state has zero
-energy under H2 (since <+|X|+> = 1, not <+|X|+> = 0; actually
-<+|X|+> = 1 so the initial energy is +sum J_j — DMRG then minimises
-downward to -sum J_j).
+We use MPS.from_random(L, chi_max) so that all bond dimensions are
+already at chi_max from the start.  1-site DMRG cannot grow bonds,
+so the initial MPS must already span the target bond dimension.
 
-Important: do NOT use |0>^L as the initial state for H2.  Because
-<0|X|0> = 0 the MPO gives a zero environment tensor and H_eff = 0,
-trapping DMRG at E = 0 forever.
+Do NOT use |0>^L (or any Z-eigenstate) as the starting point for H2.
+Because <0|X|0> = 0, every environment tensor is identically zero
+and H_eff = 0, trapping DMRG at E = 0 forever.
 
 Runs
 ----
@@ -44,22 +47,22 @@ from tensor_network_library.algorithms.dmrg import finite_dmrg, DMRGConfig
 from tensor_network_library.hamiltonian.operators import sigma_x, embed_operator
 
 # ---------------------------------------------------------------------------
-# Parameters  — edit freely
+# Parameters
 # ---------------------------------------------------------------------------
 L          = 10
-CHI_MAX    = 4       # chi=1 is exact for H2; chi=4 tests larger bond spaces
+CHI_MAX    = 4
 MAX_SWEEPS = 20
-ENERGY_TOL = 1e-12
+ENERGY_TOL = 1e-10
 MEAN       = 1.0
 VAR        = 0.1
 SEED       = 7
+INIT_SEED  = 99
 
 OUT_DIR = pathlib.Path(__file__).parent / "results"
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def dense_h2(L: int, J: np.ndarray) -> np.ndarray:
-    """Build dense H2 = sum_j J_j X_j  (shape 2^L x 2^L)."""
     X = sigma_x()
     H = np.zeros((2**L, 2**L), dtype=np.complex128)
     for j in range(L):
@@ -74,28 +77,23 @@ def main() -> None:
     print(f"[H2] L={L}  chi_max={CHI_MAX}")
     print(f"[H2] J = {np.round(J, 4)}")
 
-    # Build MPO
     X   = sigma_x()
     mpo = MPO.identity_mpo(L=L, d=2, dtype=np.complex128)
     for j in range(L):
         mpo.initialize_single_site_operator(J[j] * X, site=j)
 
-    # Exact reference
-    evals, _ = np.linalg.eigh(dense_h2(L, J))
-    E_exact  = float(evals[0])
+    evals, _   = np.linalg.eigh(dense_h2(L, J))
+    E_exact    = float(evals[0])
     E_analytic = -float(np.sum(np.abs(J)))
     print(f"[H2] Exact ground-state energy : {E_exact:.12f}")
     print(f"[H2] Analytic minimum energy   : {E_analytic:.12f}")
 
-    # Initial MPS: |+>^L = tensor product of |+> = (|0>+|1>)/sqrt(2).
-    # This state is the MAXIMUM eigenvector of H2 (energy = +sum J_j),
-    # giving DMRG the maximum possible downhill gradient.
-    # Do NOT use |0>^L: <0|X|0> = 0 traps DMRG at E=0.
-    mps0 = MPS.from_qubit_labels(["+"] * L)
+    # Random chi_max MPS -- bond dims already at chi_max so 1-site DMRG
+    # can optimise the full variational manifold from sweep 1.
+    mps0 = MPS.from_random(L=L, chi_max=CHI_MAX, physical_dims=2, seed=INIT_SEED)
     print(f"[H2] Initial MPS: {mps0}")
     print(f"[H2] Initial energy: {expectation_value_env(mps0, mpo):.12f}")
 
-    # Run DMRG
     env    = Environment.qubit_chain(L=L, chi_max=CHI_MAX)
     config = DMRGConfig(max_sweeps=MAX_SWEEPS, energy_tol=ENERGY_TOL, verbose=True)
     result = finite_dmrg(env, mpo, mps0, config)
@@ -111,7 +109,6 @@ def main() -> None:
     print(f"[H2] Analytic min energy : {E_analytic:.12f}")
     print(f"[H2] |E_dmrg - E_exact|  : {E_error:.3e}")
 
-    # Save CSV
     csv_path = OUT_DIR / "H2_convergence.csv"
     np.savetxt(
         csv_path,
@@ -122,7 +119,6 @@ def main() -> None:
     )
     print(f"[H2] Saved CSV  -> {csv_path}")
 
-    # Plot
     fig, axes = plt.subplots(1, 2, figsize=(12, 4))
 
     ax = axes[0]
@@ -131,7 +127,7 @@ def main() -> None:
     ax.axhline(E_analytic, color="green", ls=":",  lw=1.5, label="Analytic min")
     ax.set_xlabel("Sweep")
     ax.set_ylabel("Energy")
-    ax.set_title(r"H2 = $\sum_j J_j X_j$ — energy vs sweep")
+    ax.set_title(r"H2 = $\sum_j J_j X_j$ -- energy vs sweep")
     ax.legend()
     ax.grid(True, alpha=0.4)
 
