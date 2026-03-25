@@ -1,27 +1,31 @@
 """DMRG example: random transverse X-field Hamiltonian (H2).
 
-H2 = sum_j J_j X_j   with J_j ~ N(mean=MEAN, std=sqrt(VAR))
+H2 = Σ_j J_j X_j   with J_j ~ N(mean=MEAN, std=sqrt(VAR))
 
 Physics
 -------
-H2 is a sum of single-site X operators.  The ground state is the
-product state |->^L (for all J_j > 0) with energy E = -sum_j J_j.
-Because the ground state is a product state, chi=1 is sufficient.
-We use chi_max=4 to demonstrate that the algorithm works at higher
-bond dimensions too (the extra dimensions simply optimise to zero).
+H2 is a sum of single-site X operators.  Because every site decouples,
+the ground state is the product state |->^L (for all J_j > 0) with
+energy E = -sum_j J_j.  The ground state is a product state so chi=1
+suffices, but we start at chi_max to test the algorithm at higher bond
+dimensions.
 
-Initial guess
--------------
-We use MPS.from_random(L, chi_max) so that all bond dimensions are
-already at chi_max from the start.  1-site DMRG cannot grow bonds,
-so the initial MPS must already span the target bond dimension.
+MPO construction
+----------------
+We use ``random_field_mpo`` from ``hamiltonian.models``.  This is a
+chi=2 FSM MPO that sums site-local operators correctly.
 
-Do NOT use |0>^L (or any Z-eigenstate) as the starting point for H2.
-Because <0|X|0> = 0, every environment tensor is identically zero
-and H_eff = 0, trapping DMRG at E = 0 forever.
+DO NOT use ``identity_mpo + initialize_single_site_operator`` for this:
+that approach *replaces* each identity with the local operator, building
+a *product* of operators (tensor product) rather than a *sum*.
 
-Runs
-----
+Initial MPS
+-----------
+``MPS.from_random(L, chi_max)`` gives bonds already at chi_max so that
+1-site DMRG can optimise the full variational manifold from sweep 1.
+
+Run
+---
     python examples/random_x_field/run_dmrg.py
 """
 
@@ -41,9 +45,9 @@ if str(_REPO_ROOT) not in sys.path:
 
 from tensor_network_library.core.env import Environment
 from tensor_network_library.core.mps import MPS
-from tensor_network_library.core.mpo import MPO
 from tensor_network_library.core.utils import expectation_value_env
 from tensor_network_library.algorithms.dmrg import finite_dmrg, DMRGConfig
+from tensor_network_library.hamiltonian.models import random_field_mpo
 from tensor_network_library.hamiltonian.operators import sigma_x, embed_operator
 
 # ---------------------------------------------------------------------------
@@ -63,6 +67,7 @@ OUT_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def dense_h2(L: int, J: np.ndarray) -> np.ndarray:
+    """Dense H2 = Σ_j J_j X_j for exact diagonalisation reference."""
     X = sigma_x()
     H = np.zeros((2**L, 2**L), dtype=np.complex128)
     for j in range(L):
@@ -77,19 +82,17 @@ def main() -> None:
     print(f"[H2] L={L}  chi_max={CHI_MAX}")
     print(f"[H2] J = {np.round(J, 4)}")
 
-    X   = sigma_x()
-    mpo = MPO.identity_mpo(L=L, d=2, dtype=np.complex128)
-    for j in range(L):
-        mpo.initialize_single_site_operator(J[j] * X, site=j)
+    # Correct MPO: Σ_j J_j X_j  (chi=2 FSM, not a product of operators)
+    mpo = random_field_mpo(L=L, coefficients=J, direction="x")
 
+    # Exact energy via dense diagonalisation
     evals, _   = np.linalg.eigh(dense_h2(L, J))
     E_exact    = float(evals[0])
     E_analytic = -float(np.sum(np.abs(J)))
     print(f"[H2] Exact ground-state energy : {E_exact:.12f}")
     print(f"[H2] Analytic minimum energy   : {E_analytic:.12f}")
 
-    # Random chi_max MPS -- bond dims already at chi_max so 1-site DMRG
-    # can optimise the full variational manifold from sweep 1.
+    # Random chi_max initial MPS
     mps0 = MPS.from_random(L=L, chi_max=CHI_MAX, physical_dims=2, seed=INIT_SEED)
     print(f"[H2] Initial MPS: {mps0}")
     print(f"[H2] Initial energy: {expectation_value_env(mps0, mpo):.12f}")
@@ -127,12 +130,12 @@ def main() -> None:
     ax.axhline(E_analytic, color="green", ls=":",  lw=1.5, label="Analytic min")
     ax.set_xlabel("Sweep")
     ax.set_ylabel("Energy")
-    ax.set_title(r"H2 = $\sum_j J_j X_j$ -- energy vs sweep")
+    ax.set_title(r"H2 = $\sum_j J_j X_j$ — energy vs sweep")
     ax.legend()
     ax.grid(True, alpha=0.4)
 
     ax2 = axes[1]
-    err = np.clip(np.abs(energies - E_exact), 1e-16, None)
+    err = np.clip(np.abs(energies.real - E_exact), 1e-16, None)
     ax2.semilogy(sweeps, err, marker="s", color="darkorange")
     ax2.set_xlabel("Sweep")
     ax2.set_ylabel(r"$|E_{\rm DMRG} - E_{\rm exact}|$")
