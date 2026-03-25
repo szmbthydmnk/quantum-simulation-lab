@@ -10,6 +10,7 @@ dependencies = [
     "numpy",
     "scipy",
     "pytest",
+    "matplotlib",
 ]
 
 [tool.setuptools.packages.find]
