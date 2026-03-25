@@ -1,14 +1,18 @@
-"""Tests for the example DMRG Hamiltonian builders."""
+"""Tests for example DMRG Hamiltonian builders.
+
+These tests validate that the simple example Hamiltonian MPOs produce
+expectation values consistent with dense reference Hamiltonians, and
+that the zz+z model matches the Heisenberg dense builder.
+"""
+
+from __future__ import annotations
 
 import numpy as np
 
-from tensor_network_library.core.utils import expectation_value_env
 from tensor_network_library.core.mps import MPS
-from tensor_network_library.hamiltonian.operators import (
-    sigma_z,
-    embed_operator,
-)
-from tensor_network_library.hamiltonian.models import heisenberg_dense
+from tensor_network_library.core.utils import expectation_value_env
+from tensor_network_library.hamiltonian.operators import sigma_z, embed_operator
+from tensor_network_library.hamiltonian.models import heisenberg_dense, random_field_mpo
 from examples.dmrg_hamiltonians import (
     random_z_field_mpo,
     random_x_field_mpo,
@@ -29,18 +33,11 @@ class TestExampleHamiltonians:
         L = 4
         J = np.array([0.7, 1.1, 0.9, 1.3], dtype=float)
 
-        # Build MPO with deterministic J by seeding and overriding
-        rng = np.random.default_rng(123)
-        _ = rng.normal  # just to clarify we're not using global state
-
-        mpo = random_z_field_mpo(L=L, mean=0.0, var=1.0)
-        # Overwrite with our fixed couplings for deterministic test
-        Z = sigma_z()
-        for j in range(L):
-            mpo.initialize_single_site_operator(J[j] * Z, site=j)
+        mpo = random_field_mpo(L=L, coefficients=J, direction="z")
 
         # Dense reference: sum_j J_j Z_j
         d = 2
+        Z = sigma_z()
         H_dense = np.zeros((d**L, d**L), dtype=np.complex128)
         for j in range(L):
             H_dense += embed_operator(J[j] * Z, site=j, L=L, d=d)
