@@ -18,7 +18,7 @@ Canonical axis ordering per MPO site tensor:
 
 from __future__ import annotations
 
-from typing import Optional
+from typing import Optional, Sequence
 import numpy as np
 from numpy.typing import NDArray
 
@@ -39,7 +39,7 @@ def tfim_mpo(
     dtype: np.dtype = np.complex128,
 ) -> MPO:
     """
-    MPO for the Transverse-Field Ising Model (TFIM):
+    MPO for the Transverse-Field Ising Model (TFIM)::
 
         H = -J Σ_{i} σ_z^i σ_z^{i+1}  -  g Σ_i σ_x^i
 
@@ -74,17 +74,14 @@ def tfim_mpo(
         W = np.zeros((bond_dims[i], d, d, bond_dims[i + 1]), dtype=dtype)
 
         if i == 0:
-            # Left boundary: shape (1, d, d, 3)
             W[0, :, :, 2] = I
             W[0, :, :, 1] = -J * Sz
             W[0, :, :, 0] = -g * Sx
         elif i == L - 1:
-            # Right boundary: shape (3, d, d, 1)
             W[2, :, :, 0] = -g * Sx
             W[1, :, :, 0] = Sz
             W[0, :, :, 0] = I
         else:
-            # Bulk: shape (3, d, d, 3)
             W[2, :, :, 2] = I
             W[2, :, :, 1] = -J * Sz
             W[2, :, :, 0] = -g * Sx
@@ -109,7 +106,7 @@ def heisenberg_mpo(
     dtype: np.dtype = np.complex128,
 ) -> MPO:
     """
-    MPO for the XXZ Heisenberg model:
+    MPO for the XXZ Heisenberg model::
 
         H = Σ_i ( Jx σ_x^i σ_x^{i+1}
                 + Jy σ_y^i σ_y^{i+1}
@@ -189,16 +186,11 @@ def xx_model_mpo(
     dtype: np.dtype = np.complex128,
 ) -> MPO:
     """
-    MPO for the XX model:
+    MPO for the XX model::
 
         H = J Σ_i ( σ_x^i σ_x^{i+1} + σ_y^i σ_y^{i+1} )
 
     Thin wrapper over heisenberg_mpo with Jx=Jy=J, Jz=0, h=0.
-
-    Args:
-        L: Chain length.
-        J: Hopping/coupling strength.
-        dtype: Tensor dtype.
     """
     return heisenberg_mpo(L=L, Jx=J, Jy=J, Jz=0.0, h=0.0, dtype=dtype)
 
@@ -214,28 +206,20 @@ def field_mpo(
     dtype: np.dtype = np.complex128,
 ) -> MPO:
     """
-    MPO for a uniform single-site field:
+    MPO for a uniform single-site field::
 
         H = -h Σ_i σ_direction^i
 
-    Uses a chi=2 FSM so that site contributions are summed, not multiplied.
-
-    FSM bond states:
-        0: done (accumulated all terms to the left)
-        1: still passing identity (no field term emitted yet at this site or later)
-
-    Left boundary  (1, d, d, 2): W[0,:,:,1] = I,   W[0,:,:,0] = -h*op
-    Bulk           (2, d, d, 2): W[1,:,:,1] = I,   W[1,:,:,0] = -h*op,  W[0,:,:,0] = I
-    Right boundary (2, d, d, 1): W[1,:,:,0] = -h*op,  W[0,:,:,0] = I
+    Bond dimension chi=2 (FSM: identity pass-through + accumulate).
 
     Args:
         L:         Chain length.
-        h:         Field strength.
-        direction: 'x', 'y', or 'z'.
+        h:         Field strength (positive h lowers the energy along ``direction``).
+        direction: ``'x'``, ``'y'``, or ``'z'``.
         dtype:     Tensor dtype.
 
     Returns:
-        MPO for the field Hamiltonian.
+        MPO for the uniform field Hamiltonian.
     """
     d = 2
     ops = {"x": sigma_x, "y": sigma_y, "z": sigma_z}
@@ -253,17 +237,96 @@ def field_mpo(
         W = np.zeros((bond_dims[i], d, d, bond_dims[i + 1]), dtype=dtype)
 
         if i == 0:
-            # Left boundary: shape (1, d, d, 2)
             W[0, :, :, 1] = I
             W[0, :, :, 0] = op
         elif i == L - 1:
-            # Right boundary: shape (2, d, d, 1)
             W[1, :, :, 0] = op
             W[0, :, :, 0] = I
         else:
-            # Bulk: shape (2, d, d, 2)
             W[1, :, :, 1] = I
             W[1, :, :, 0] = op
+            W[0, :, :, 0] = I
+
+        mpo.tensors[i].data = W
+
+    return mpo
+
+
+# ---------------------------------------------------------------------------
+# Site-dependent single-site field (e.g. random transverse field)
+# ---------------------------------------------------------------------------
+
+def random_field_mpo(
+    L: int,
+    coefficients: Sequence[float],
+    direction: str = "x",
+    dtype: np.dtype = np.complex128,
+) -> MPO:
+    """
+    MPO for a site-varying single-site field::
+
+        H = Σ_i h_i σ_direction^i
+
+    Uses the same chi=2 FSM as :func:`field_mpo`.
+
+    FSM bond states:
+        0 : ``done`` — all terms to the left of this site have been accumulated.
+        1 : ``open`` — identity pass-through; no term has been emitted yet at
+            this or any later site.
+
+    Tensor structure per site i (bulk)::
+
+        W[1, :, :, 1] = I            (pass identity through: not yet at this site)
+        W[1, :, :, 0] = h_i * op    (emit local term and close)
+        W[0, :, :, 0] = I            (propagate done state)
+
+    Args:
+        L:            Chain length.
+        coefficients: Site-local field strengths ``h_i`` of length ``L``.
+                      The Hamiltonian is ``H = Σ_i h_i * σ_direction^i``
+                      (note: positive ``h_i`` raises energy; use negative
+                      values for a ferromagnetic field).
+        direction:    ``'x'``, ``'y'``, or ``'z'``.
+        dtype:        Tensor dtype.
+
+    Returns:
+        MPO representing the site-varying field Hamiltonian.
+
+    Raises:
+        ValueError: if ``len(coefficients) != L`` or direction is invalid.
+    """
+    if len(coefficients) != L:
+        raise ValueError(
+            f"len(coefficients) = {len(coefficients)} must equal L = {L}"
+        )
+    ops = {"x": sigma_x, "y": sigma_y, "z": sigma_z}
+    if direction not in ops:
+        raise ValueError(f"direction must be 'x', 'y', or 'z', got {direction!r}")
+
+    d   = 2
+    op  = ops[direction](dtype)       # bare Pauli — coefficient applied per site
+    I   = identity(d, dtype)
+    chi = 2
+
+    bond_dims = [1] + [chi] * (L - 1) + [1]
+    mpo = MPO(L=L, d=d, bond_policy=bond_dims, dtype=dtype)
+
+    for i in range(L):
+        h_i = complex(coefficients[i])
+        W   = np.zeros((bond_dims[i], d, d, bond_dims[i + 1]), dtype=dtype)
+
+        if i == 0:
+            # Shape (1, d, d, 2)
+            W[0, :, :, 1] = I
+            W[0, :, :, 0] = h_i * op
+        elif i == L - 1:
+            # Shape (2, d, d, 1)
+            W[1, :, :, 0] = h_i * op
+            W[0, :, :, 0] = I
+        else:
+            # Shape (2, d, d, 2)
+            W[1, :, :, 1] = I
+            W[1, :, :, 0] = h_i * op
             W[0, :, :, 0] = I
 
         mpo.tensors[i].data = W
@@ -282,8 +345,7 @@ def tfim_dense(
     dtype: np.dtype = np.complex128,
 ) -> ComplexArray:
     """
-    Build the TFIM Hamiltonian as a dense (d^L, d^L) matrix.
-    Intended for validation against tfim_mpo().to_dense() for small L.
+    Dense TFIM Hamiltonian.  Used to validate ``tfim_mpo().to_dense()`` for small L.
     """
     from .operators import embed_operator, embed_two_site_operator, zz
 
@@ -304,8 +366,7 @@ def heisenberg_dense(
     dtype: np.dtype = np.complex128,
 ) -> ComplexArray:
     """
-    Build the Heisenberg Hamiltonian as a dense (d^L, d^L) matrix.
-    Intended for validation against heisenberg_mpo().to_dense() for small L.
+    Dense Heisenberg Hamiltonian.  Used to validate ``heisenberg_mpo().to_dense()``.
     """
     from .operators import embed_operator, embed_two_site_operator, xx, yy, zz
 

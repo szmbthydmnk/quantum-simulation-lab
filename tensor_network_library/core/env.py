@@ -6,6 +6,8 @@ import numpy as np
 
 from .policy import TruncationPolicy
 
+from .mpo import MPO
+
 boundary_condition = Literal["open", "periodic"]
 system_type = Literal["qubit", "spin-1/2"]   # qubit and spin-1/2 identical for now;
                                               # fermionic distinction + qudit-# planned
@@ -95,3 +97,19 @@ class Environment:
             f"Environment(L={self.L}, d={self.d}, bc='{self.bc}'"
             f", system_type='{self.system_type}'{chi_str})"
         )
+
+
+    def validate_hamiltonian(self, mpo: MPO) -> None:
+        """
+        Validate that an MPO mathces this environment.
+    
+        Checks:
+            - Same number of sites (L).
+            - Same local dimensions (d).
+        """
+    
+        if not mpo.L == self.L:
+            raise ValueError(f"MPO length L={mpo.L} does not match Environment L={self.L}")
+        
+        if not mpo.d == self.d:
+            raise ValueError(f"MPO local dim d={mpo.d} does not match Environment d={self.d}")

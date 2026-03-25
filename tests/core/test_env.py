@@ -6,6 +6,7 @@ import numpy as np
 import pytest
 from tensor_network_library.core.env import Environment
 from tensor_network_library.core.policy import TruncationPolicy
+from tensor_network_library.hamiltonian.models import tfim_mpo, heisenberg_mpo
 
 
 class TestEnvironmentBasic:
@@ -60,6 +61,7 @@ class TestEnvironmentFactories:
 class TestEnvironmentEffectiveTruncation:
     def test_uses_explicit_truncation_first(self):
         trunc = TruncationPolicy(max_bond_dim=32)
+
         env = Environment(L=4, d=2, truncation=trunc)
         assert env.effective_truncation is trunc
 
@@ -74,3 +76,30 @@ class TestEnvironmentRepr:
         env = Environment(L=5, d=2)
         r = repr(env)
         assert "L=5" in r and "d=2" in r
+
+
+class TestEnvironmentValidateHamiltonian:
+    def test_matching_tfim_mpo_passes(self):
+        env = Environment.qubit_chain(L=4)
+        mpo = tfim_mpo(L=4, J=1.0, g=1.0, dtype=np.complex128)
+
+        # should not raise
+        env.validate_hamiltonian(mpo)
+
+    def test_mismatched_length_raises(self):
+        env = Environment.qubit_chain(L=4)
+        mpo = tfim_mpo(L=5, J=1.0, g=1.0, dtype=np.complex128)
+
+        with pytest.raises(ValueError, match="MPO length"):
+            env.validate_hamiltonian(mpo)
+    
+    def test_mismatched_local_dim_raises(self):
+        # Construct a bogus MPO with d != env.d.
+        env = Environment.qubit_chain(L=3)
+        mpo = tfim_mpo(L=3, J=1.0, g=1.0, dtype=np.complex128)
+
+        # Fake a wrong local dimension for the test
+        mpo.d = 3  # type: ignore[attr-defined]
+
+        with pytest.raises(ValueError, match="local dim"):
+            env.validate_hamiltonian(mpo)

@@ -207,7 +207,7 @@ class MPS:
 
         return mps
 
-    
+
     @classmethod
     def from_qubit_labels(cls,
                           labels: Sequence[str],
@@ -225,7 +225,68 @@ class MPS:
 
         local_vecs = [np.asarray(v, dtype=dtype) for v in qubit_states(labels)]
         return cls.from_local_states(local_states=local_vecs, name=name, dtype=dtype)
-    
+
+
+    @classmethod
+    def from_random(
+        cls,
+        L: int,
+        chi_max: int,
+        physical_dims: PhysDims = 2,
+        *,
+        seed: int | None = None,
+        name: str = "MPS",
+        dtype: np.dtype = np.complex128,
+    ) -> "MPS":
+        """
+        Create a random MPS with bond dimension ``chi_max`` and normalize it.
+
+        The bond dims are capped by the maximum entanglement-entropy bond dim
+        at each cut (i.e. ``min(d^i, d^(L-i), chi_max)``) so that boundary
+        sites always have bond dim 1.  This matches the "default" bond policy
+        with an explicit chi cap.
+
+        The tensors are filled with iid complex Gaussian entries, then the
+        whole MPS is normalized via :meth:`normalize`.
+
+        Args:
+            L:             Chain length.
+            chi_max:       Maximum bond dimension (interior bonds).
+            physical_dims: Local Hilbert space dimension(s).  Int for uniform.
+            seed:          RNG seed for reproducibility.  ``None`` = random.
+            name:          Name tag.
+            dtype:         Complex dtype (default ``np.complex128``).
+
+        Returns:
+            Normalized random MPS.
+        """
+        rng = np.random.default_rng(seed)
+        truncation = TruncationPolicy(max_bond_dim=chi_max)
+
+        mps = cls(
+            L=L,
+            physical_dims=physical_dims,
+            bond_policy="default",
+            name=name,
+            truncation=truncation,
+            dtype=dtype,
+        )
+
+        for i in range(L):
+            chi_l = mps._bond_dims[i]
+            d_i   = mps._physical_dims[i]
+            chi_r = mps._bond_dims[i + 1]
+            data  = rng.standard_normal((chi_l, d_i, chi_r)).astype(dtype)
+            if np.issubdtype(dtype, np.complexfloating):
+                data = data + 1j * rng.standard_normal((chi_l, d_i, chi_r)).astype(dtype)
+            mps.tensors[i] = Tensor(
+                data,
+                indices=[mps.bonds[i], mps.indices[i], mps.bonds[i + 1]],
+            )
+
+        mps.normalize()
+        return mps
+
 
     @classmethod
     def from_statevector(cls,
@@ -313,7 +374,6 @@ class MPS:
             di = dims[i]
             rem = rem.reshape(chi_left * di, -1)
 
-            # SVD: singular values are sorted descending. [web:508]
             U, S, Vh = np.linalg.svd(rem, full_matrices=False)
 
             chi = choose_chi(S)
@@ -475,7 +535,7 @@ class MPS:
 
     def norm(self) -> float:
         """
-        Compute the norm of the MPS as √⟨ψ|ψ⟩.
+        Compute the norm of the MPS as sqrt(<psi|psi>).
 
         Algorithm:
             Contract the MPS with its conjugate from left to right.
@@ -494,7 +554,7 @@ class MPS:
 
     def normalize(self) -> "MPS":
         """
-        Normalize the MPS in-place so that ⟨ψ|ψ⟩ = 1.
+        Normalize the MPS in-place so that <psi|psi> = 1.
 
         Returns:
             self for chaining.
@@ -509,7 +569,7 @@ class MPS:
 
     def to_dense(self) -> np.ndarray:
         """
-        Convert the MPS to a full statevector |Ψ> as a 1D array of length Π_i d_i.
+        Convert the MPS to a full statevector |Psi> as a 1D array of length prod_i d_i.
 
         Intended for small systems and for checks/debugging.
         """
