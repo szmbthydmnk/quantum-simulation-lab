@@ -7,8 +7,8 @@ useful for testing and demonstrating DMRG:
 * H2 = sum_j J_j X_j with the same J_j distribution
 * H3 = Jz sum_i Z_i Z_{i+1} - h sum_i Z_i (Ising-like ZZ+Z model)
 
-All builders return MPOs compatible with a qubit chain Environment,
-using the existing MPO and operator infrastructure.
+The random field Hamiltonians H1 and H2 are now convenience wrappers
+around :func:`tensor_network_library.hamiltonian.models.random_field_mpo`.
 """
 
 from __future__ import annotations
@@ -17,7 +17,10 @@ import numpy as np
 
 from tensor_network_library.core.mpo import MPO
 from tensor_network_library.hamiltonian.operators import sigma_x, sigma_z
-from tensor_network_library.hamiltonian.models import heisenberg_mpo
+from tensor_network_library.hamiltonian.models import (
+    heisenberg_mpo,
+    random_field_mpo,
+)
 
 
 def random_z_field_mpo(
@@ -29,29 +32,11 @@ def random_z_field_mpo(
 ) -> MPO:
     """H1 = sum_j J_j Z_j with J_j ~ N(mean, var).
 
-    Args:
-        L:
-            Chain length.
-        mean, var:
-            Mean and variance of the normal distribution used to draw the
-            random couplings J_j.
-        dtype:
-            Complex dtype of the underlying tensors.
-
-    Returns:
-        An MPO representing the random longitudinal-field Hamiltonian.
+    This is a thin wrapper around :func:`random_field_mpo` with
+    ``direction="z"`` and a freshly drawn array of coefficients.
     """
-    d = 2
-    mpo = MPO.identity_mpo(L=L, d=d, dtype=dtype)
-
     J = np.random.normal(loc=mean, scale=np.sqrt(var), size=L)
-    Z = sigma_z(dtype)
-
-    for j in range(L):
-        op = J[j] * Z
-        mpo.initialize_single_site_operator(op, site=j)
-
-    return mpo
+    return random_field_mpo(L=L, coefficients=J, direction="z", dtype=dtype)
 
 
 def random_x_field_mpo(
@@ -63,29 +48,10 @@ def random_x_field_mpo(
 ) -> MPO:
     """H2 = sum_j J_j X_j with J_j ~ N(mean, var).
 
-    Args:
-        L:
-            Chain length.
-        mean, var:
-            Mean and variance of the normal distribution used to draw the
-            random couplings J_j.
-        dtype:
-            Complex dtype of the underlying tensors.
-
-    Returns:
-        An MPO representing the random transverse-field Hamiltonian.
+    Thin wrapper around :func:`random_field_mpo` with ``direction="x"``.
     """
-    d = 2
-    mpo = MPO.identity_mpo(L=L, d=d, dtype=dtype)
-
     J = np.random.normal(loc=mean, scale=np.sqrt(var), size=L)
-    X = sigma_x(dtype)
-
-    for j in range(L):
-        op = J[j] * X
-        mpo.initialize_single_site_operator(op, site=j)
-
-    return mpo
+    return random_field_mpo(L=L, coefficients=J, direction="x", dtype=dtype)
 
 
 def zz_plus_z_mpo(
@@ -99,19 +65,5 @@ def zz_plus_z_mpo(
 
     This is obtained as a special case of the Heisenberg MPO with
     Jx = Jy = 0, only Jz and a longitudinal field h are non-zero.
-
-    Args:
-        L:
-            Chain length (must be >= 2 for the ZZ interaction).
-        Jz:
-            Strength of the nearest-neighbour ZZ coupling.
-        h:
-            Strength of the longitudinal field term (with a minus sign,
-            matching the convention in :func:`heisenberg_mpo`).
-        dtype:
-            Complex dtype of the MPO tensors.
-
-    Returns:
-        An MPO representing the Ising-like ZZ+Z Hamiltonian.
     """
     return heisenberg_mpo(L=L, Jx=0.0, Jy=0.0, Jz=Jz, h=h, dtype=dtype)
