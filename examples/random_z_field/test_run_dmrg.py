@@ -1,8 +1,8 @@
 """Automated pytest tests for the H1 (random Z-field) DMRG example.
 
-These tests verify that the ``run_dmrg.py`` script produces correct
-results at the algorithmic level (energy convergence and exact-match) as
-well as at the I/O level (CSV and PNG output).
+These tests verify that the ``run_dmrg.py`` script and the core DMRG
+algorithm produce correct results for a purely on-site Z-field
+Hamiltonian H1 = sum_j J_j Z_j.
 """
 
 from __future__ import annotations
@@ -20,28 +20,24 @@ if str(_REPO_ROOT) not in sys.path:
 
 from tensor_network_library.core.env import Environment
 from tensor_network_library.core.mps import MPS
-from tensor_network_library.core.mpo import MPO
 from tensor_network_library.core.policy import TruncationPolicy
 from tensor_network_library.core.utils import expectation_value_env
 from tensor_network_library.algorithms.dmrg import finite_dmrg, DMRGConfig
+from tensor_network_library.hamiltonian.models import random_field_mpo
 from tensor_network_library.hamiltonian.operators import sigma_z, embed_operator
 
-
-# ---------------------------------------------------------------------------
-# Shared fixtures
-# ---------------------------------------------------------------------------
 
 L_SMALL   = 6
 CHI_MAX   = 8
 
 
-def _fixed_z_field_mpo(L: int, J: np.ndarray) -> MPO:
-    """Build H1 MPO with a deterministic array of couplings J."""
-    Z   = sigma_z()
-    mpo = MPO.identity_mpo(L=L, d=2, dtype=np.complex128)
-    for j in range(L):
-        mpo.initialize_single_site_operator(J[j] * Z, site=j)
-    return mpo
+def _fixed_z_field_mpo(L: int, J: np.ndarray):
+    """Build H1 MPO with a deterministic array of couplings J.
+
+    Uses the core ``random_field_mpo`` builder with ``direction="z"``
+    but passes a fixed J instead of sampling.
+    """
+    return random_field_mpo(L=L, coefficients=J, direction="z")
 
 
 def _dense_h1(L: int, J: np.ndarray) -> np.ndarray:
@@ -54,12 +50,8 @@ def _dense_h1(L: int, J: np.ndarray) -> np.ndarray:
     return H
 
 
-# ---------------------------------------------------------------------------
-# Tests
-# ---------------------------------------------------------------------------
-
 class TestH1ZFieldDMRG:
-    """Tests for the random Z-field Hamiltonian example."""
+    """Tests for the random Z-field Hamiltonian example and core DMRG."""
 
     def test_mpo_expectation_matches_dense(self):
         """The MPO expectation value matches the dense reference for a random state."""
@@ -152,7 +144,6 @@ class TestH1ZFieldDMRG:
 
     def test_csv_and_plot_written(self, tmp_path: pathlib.Path, monkeypatch):
         """run_dmrg.main() writes the expected CSV and PNG files."""
-        # Redirect the output directory inside the script to tmp_path
         import examples.random_z_field.run_dmrg as script
         monkeypatch.setattr(script, "OUT_DIR", tmp_path)
         monkeypatch.setattr(script, "L", L_SMALL)
