@@ -28,7 +28,8 @@ from tensor_network_library.core.mpo import MPO
 from tensor_network_library.core.policy import TruncationPolicy
 from tensor_network_library.core.utils import expectation_value_env
 from tensor_network_library.algorithms.dmrg import finite_dmrg, DMRGConfig
-from tensor_network_library.hamiltonian.operators import sigma_x, embed_operator
+from tensor_network_library.hamiltonian.models import random_field_mpo
+from tensor_network_library.hamiltonian.operators import embed_operator, sigma_x
 
 # ---------------------------------------------------------------------------
 # Shared helpers
@@ -39,12 +40,8 @@ CHI_MAX = 8
 
 
 def _fixed_x_field_mpo(L: int, J: np.ndarray) -> MPO:
-    """Build H2 MPO with a deterministic array of couplings J."""
-    X   = sigma_x()
-    mpo = MPO.identity_mpo(L=L, d=2, dtype=np.complex128)
-    for j in range(L):
-        mpo.initialize_single_site_operator(J[j] * X, site=j)
-    return mpo
+    """Build H2 MPO: H = sum_j J_j X_j  using random_field_mpo."""
+    return random_field_mpo(L=L, coefficients=J.tolist(), direction="x")
 
 
 def _dense_h2(L: int, J: np.ndarray) -> np.ndarray:
