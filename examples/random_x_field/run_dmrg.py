@@ -1,24 +1,25 @@
 """DMRG example: random transverse X-field Hamiltonian (H2).
 
-H2 = sum_j J_j X_j   with   J_j ~ N(mean=1.0, var=0.1)
+H2 = sum_j J_j X_j   with J_j ~ N(mean=MEAN, std=sqrt(VAR))
+
+The ground state of H2 is the product state |-> ^L (assuming J_j > 0).
+It is exactly representable at bond dimension 1.  The exact energy is
+    E_exact = -sum_j J_j.
+
+Initial guess
+-------------
+We start from |+>^L = (|0> + |1>)^L / 2^{L/2}.  This state has zero
+energy under H2 (since <+|X|+> = 1, not <+|X|+> = 0; actually
+<+|X|+> = 1 so the initial energy is +sum J_j — DMRG then minimises
+downward to -sum J_j).
+
+Important: do NOT use |0>^L as the initial state for H2.  Because
+<0|X|0> = 0 the MPO gives a zero environment tensor and H_eff = 0,
+trapping DMRG at E = 0 forever.
 
 Runs
 ----
     python examples/random_x_field/run_dmrg.py
-
-Physics note
-------------
-H2 is a sum of single-site X operators.  Its ground state is the
-tensor product of |-> = (|0> - |1>)/sqrt(2) at each site (assuming all
-J_j > 0).  The exact ground-state energy is -sum_j J_j, which can be
-verified analytically.  Like H1, this Hamiltonian is a good DMRG sanity
-check: the ground state is a product state and DMRG should converge in
-very few sweeps even at chi_max = 1.
-
-Output files (created automatically)
---------------------------------------
-    examples/random_x_field/results/H2_convergence.csv
-    examples/random_x_field/results/H2_energy_convergence.png
 """
 
 from __future__ import annotations
@@ -46,7 +47,7 @@ from tensor_network_library.hamiltonian.operators import sigma_x, embed_operator
 # Parameters  — edit freely
 # ---------------------------------------------------------------------------
 L          = 10
-CHI_MAX    = 4       # chi=1 is already exact for H2; use >1 to test larger spaces
+CHI_MAX    = 4       # chi=1 is exact for H2; chi=4 tests larger bond spaces
 MAX_SWEEPS = 20
 ENERGY_TOL = 1e-12
 MEAN       = 1.0
@@ -73,7 +74,7 @@ def main() -> None:
     print(f"[H2] L={L}  chi_max={CHI_MAX}")
     print(f"[H2] J = {np.round(J, 4)}")
 
-    # Build MPO with the fixed J values
+    # Build MPO
     X   = sigma_x()
     mpo = MPO.identity_mpo(L=L, d=2, dtype=np.complex128)
     for j in range(L):
@@ -82,18 +83,17 @@ def main() -> None:
     # Exact reference
     evals, _ = np.linalg.eigh(dense_h2(L, J))
     E_exact  = float(evals[0])
-    # Analytic: ground-state energy = -sum_j J_j (all J_j > 0 for small variance)
     E_analytic = -float(np.sum(np.abs(J)))
     print(f"[H2] Exact ground-state energy : {E_exact:.12f}")
     print(f"[H2] Analytic minimum energy   : {E_analytic:.12f}")
 
-    # Initial MPS: |0>^L product state
-    # The ground state of H2 is |->^L, which is not |0>^L but is still a
-    # product state — DMRG can reach it from |0>^L in O(1) sweeps.
-    mps0 = MPS.from_product_state([0] * L, physical_dims=2)
+    # Initial MPS: |+>^L = tensor product of |+> = (|0>+|1>)/sqrt(2).
+    # This state is the MAXIMUM eigenvector of H2 (energy = +sum J_j),
+    # giving DMRG the maximum possible downhill gradient.
+    # Do NOT use |0>^L: <0|X|0> = 0 traps DMRG at E=0.
+    mps0 = MPS.from_qubit_labels(["+"] * L)
     print(f"[H2] Initial MPS: {mps0}")
-    print(f"[H2] Initial energy: "
-          f"{expectation_value_env(mps0, mpo):.12f}")
+    print(f"[H2] Initial energy: {expectation_value_env(mps0, mpo):.12f}")
 
     # Run DMRG
     env    = Environment.qubit_chain(L=L, chi_max=CHI_MAX)

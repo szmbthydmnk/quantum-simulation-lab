@@ -1,21 +1,19 @@
 """DMRG example: random longitudinal Z-field Hamiltonian (H1).
 
-H1 = sum_j J_j Z_j   with   J_j ~ N(mean=1.0, var=0.1)
+H1 = sum_j J_j Z_j   with J_j ~ N(mean=MEAN, std=sqrt(VAR))
+
+The ground state of H1 is a product state |s0 s1 ... s_{L-1}> where
+s_j = 0 if J_j > 0, s_j = 1 if J_j < 0.  It is exactly representable
+at bond dimension 1.
+
+Initial guess
+-------------
+We start from a *random* MPS at chi_max to avoid symmetry-protected
+zero modes.  DMRG should converge to machine precision in O(1) sweeps.
 
 Runs
 ----
     python examples/random_z_field/run_dmrg.py
-
-Because H1 is a sum of single-site operators its ground state is a
-product state (all spins aligned along ±Z depending on sign(J_j)).  It
-is exactly representable at bond dimension 1.  The example is useful as a
-sanity check: DMRG must converge in very few sweeps and the final energy
-must match the exact dense value.
-
-Output files (created automatically)
---------------------------------------
-    examples/random_z_field/results/H1_convergence.csv
-    examples/random_z_field/results/H1_energy_convergence.png
 """
 
 from __future__ import annotations
@@ -42,13 +40,14 @@ from tensor_network_library.hamiltonian.operators import sigma_z, embed_operator
 # ---------------------------------------------------------------------------
 # Parameters  — edit freely
 # ---------------------------------------------------------------------------
-L          = 10      # chain length
-CHI_MAX    = 4       # MPS bond dimension (chi=1 is exact for H1, use >1 to test)
+L          = 10
+CHI_MAX    = 4       # chi=1 is exact for H1; chi=4 lets us test larger spaces
 MAX_SWEEPS = 20
 ENERGY_TOL = 1e-12
 MEAN       = 1.0
 VAR        = 0.1
 SEED       = 42
+INIT_SEED  = 0       # separate seed for the initial random MPS
 
 OUT_DIR = pathlib.Path(__file__).parent / "results"
 OUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -70,7 +69,7 @@ def main() -> None:
     print(f"[H1] L={L}  chi_max={CHI_MAX}")
     print(f"[H1] J = {np.round(J, 4)}")
 
-    # Build MPO with the fixed J values
+    # Build MPO
     Z   = sigma_z()
     mpo = MPO.identity_mpo(L=L, d=2, dtype=np.complex128)
     for j in range(L):
@@ -81,14 +80,12 @@ def main() -> None:
     E_exact  = float(evals[0])
     print(f"[H1] Exact ground-state energy: {E_exact:.12f}")
 
-    # Initial MPS: random product state (all |0>)
-    # Using |0>^L as the starting point is fine for H1 because the ground
-    # state is a product state; for more entangled Hamiltonians you should
-    # use a random bond-chi MPS.
-    mps0 = MPS.from_product_state([0] * L, physical_dims=2)
+    # Initial MPS: random bond-chi_max state to avoid zero-energy subspaces.
+    # H1 is diagonal in the Z basis so any random state has non-zero overlap
+    # with the ground state.
+    mps0 = MPS.from_random(L=L, chi_max=CHI_MAX, physical_dims=2, seed=INIT_SEED)
     print(f"[H1] Initial MPS: {mps0}")
-    print(f"[H1] Initial energy (from_product_state): "
-          f"{expectation_value_env(mps0, mpo):.12f}")
+    print(f"[H1] Initial energy: {expectation_value_env(mps0, mpo):.12f}")
 
     # Run DMRG
     env    = Environment.qubit_chain(L=L, chi_max=CHI_MAX)
@@ -109,7 +106,7 @@ def main() -> None:
     csv_path = OUT_DIR / "H1_convergence.csv"
     np.savetxt(
         csv_path,
-        np.column_stack([sweeps, energies, max_bonds]),
+        np.column_stack([sweeps, energies.real, max_bonds]),
         delimiter=",",
         header="sweep,energy,max_bond_dim",
         comments="",
