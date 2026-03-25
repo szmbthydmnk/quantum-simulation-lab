@@ -1,38 +1,39 @@
-"""Finite-size 1-site DMRG.
+"""Finite-size DMRG algorithms (1-site and 2-site variants).
 
-Bond-dimension strategy
------------------------
-1-site DMRG cannot grow bond dimensions during the sweep because the
-variational manifold is fixed by the MPS structure.  The correct
-approach is to start from an MPS whose bond dimensions are already at
-``chi_max`` -- random tensors work well.  Use ``MPS.from_random``.
+1-site DMRG
+------------
+The 1-site variant keeps bond dimensions fixed and optimises one tensor
+at a time given left/right environments. It is mainly useful for debug
+and for cases where a good initial state with the target bond profile is
+already known.
 
-For genuinely entangled ground states (e.g. TFIM at critical point,
-Heisenberg) use 2-site DMRG instead, which SVD-truncates after each
-site update and can both grow and shrink bonds.  2-site DMRG is
-planned for Phase 2 of the roadmap.
+2-site DMRG
+-----------
+The 2-site variant optimises pairs of neighbouring sites and performs an
+SVD truncation after each update. This is the standard, robust finite
+DMRG algorithm: it can grow and shrink bonds dynamically up to
+``max_bond_dim`` from :class:`~tensor_network_library.core.policy.TruncationPolicy`.
 
-Gauge maintenance
+Index conventions
 -----------------
-* Initialisation  : right-canonicalise the initial MPS.
-* L->R half-sweep : after optimising site i, QR -> store Q (left-
-  orthonormal) at site i, absorb R into site i+1; update L_env[i+1].
-* R->L half-sweep : after optimising site i, LQ -> store Q (right-
-  orthonormal) at site i, absorb L into site i-1; update R_env inline.
-* End of each full sweep: rebuild R_env from scratch so the next L->R
-  pass always starts from a consistent set of environments.
-
-Index convention
-----------------
 MPO tensors       : (wL, d_in, d_out, wR)   -- axis 1=d_in, 2=d_out
-Environment arrays: (chiMPS, chiMPS, wMPO)
-H_eff[(a,s,c),(b,t,d)] = sum_{x,y} L[a,b,x] * W[x,s,t,y] * R[c,d,y]
+MPS tensors       : (chiL, d, chiR)
+Environment arrays: (chiL, chiL, wL) on the left; (chiR, chiR, wR) on the right.
+
+For the 1-site effective Hamiltonian at site i::
+
+    H_eff[(a,s,c),(b,t,d)] = sum_{x,y} L[a,b,x] * W[x,s,t,y] * R[c,d,y]
+
+For the 2-site effective Hamiltonian on bond (i,i+1)::
+
+    H_eff[(a,s1,s2,c),(b,t1,t2,d)]
+        = sum_{x,y,z} L[a,b,x] W_i[x,s1,t1,y] W_{i+1}[y,s2,t2,z] R[c,d,z]
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 import numpy as np
 
@@ -45,8 +46,10 @@ from tensor_network_library.core.canonical import (
 from tensor_network_library.core.env import Environment
 from tensor_network_library.core.mps import MPS
 from tensor_network_library.core.mpo import MPO
+from tensor_network_library.core.policy import TruncationPolicy
 from tensor_network_library.core.utils import (
     expectation_value_env,
+    build_left_environments,
     build_right_environments,
 )
 
@@ -55,9 +58,10 @@ from tensor_network_library.core.utils import (
 # Public data structures
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class DMRGConfig:
-    """Configuration for finite-size 1-site DMRG.
+    """Configuration for finite-size DMRG sweeps.
 
     Attributes
     ----------
@@ -68,36 +72,40 @@ class DMRGConfig:
     verbose:
         Print sweep-by-sweep diagnostics.
     """
-    max_sweeps: int   = 20
+
+    max_sweeps: int = 20
     energy_tol: float = 1e-10
-    verbose:    bool  = False
+    verbose: bool = False
 
 
 @dataclass
 class DMRGResult:
-    """Result returned by :func:`finite_dmrg`.
+    """Result returned by :func:`finite_dmrg_onesite` and
+    :func:`finite_dmrg_twosite`.
 
     Attributes
     ----------
     mps:
-        Final MPS (orthogonality centre at site 0).
+        Final MPS (no particular canonical form is guaranteed).
     energies:
         Energy after each full sweep; index 0 is the energy before any sweep.
     bond_dims:
         ``mps.bond_dims`` snapshot after each full sweep.
     """
-    mps:       MPS
-    energies:  List[float]
+
+    mps: MPS
+    energies: List[float]
     bond_dims: List[List[int]]
 
 
 # ---------------------------------------------------------------------------
-# Internal helpers
+# 1-site helpers (kept mainly for debugging / comparison)
 # ---------------------------------------------------------------------------
 
-def _build_local_heff(
-    L_i:   np.ndarray,
-    W_i:   np.ndarray,
+
+def _build_local_heff_onesite(
+    L_i: np.ndarray,
+    W_i: np.ndarray,
     R_ip1: np.ndarray,
 ) -> np.ndarray:
     """Dense 1-site effective Hamiltonian at site i.
@@ -114,20 +122,21 @@ def _build_local_heff(
     -------
     Dense matrix of shape (chiL*d*chiR, chiL*d*chiR).
     """
+
     H_tensor = np.einsum("abx,xsty,cdy->asctbd", L_i, W_i, R_ip1, optimize=True)
     chiL = H_tensor.shape[0]
-    d    = H_tensor.shape[1]
+    d = H_tensor.shape[1]
     chiR = H_tensor.shape[2]
     return H_tensor.reshape(chiL * d * chiR, chiL * d * chiR)
 
 
 def _optimize_site(
-    L_i:   np.ndarray,
-    W_i:   np.ndarray,
+    L_i: np.ndarray,
+    W_i: np.ndarray,
     R_ip1: np.ndarray,
-    A_i:   np.ndarray,
-) -> tuple[np.ndarray, float]:
-    """Diagonalise H_eff and return the ground-state tensor and eigenvalue.
+    A_i: np.ndarray,
+) -> Tuple[np.ndarray, float]:
+    """Diagonalise 1-site H_eff and return ground-state tensor and eigenvalue.
 
     Parameters
     ----------
@@ -140,46 +149,38 @@ def _optimize_site(
     A_opt  : (chiL, d, chiR) ground-state eigenvector.
     E_local: lowest eigenvalue of H_eff.
     """
+
     chiL, d, chiR = A_i.shape
-    H_eff = _build_local_heff(L_i, W_i, R_ip1)
+    H_eff = _build_local_heff_onesite(L_i, W_i, R_ip1)
     evals, evecs = np.linalg.eigh(H_eff)
-    idx     = int(np.argmin(evals))
+    idx = int(np.argmin(evals))
     E_local = float(evals[idx])
-    A_opt   = evecs[:, idx].reshape(chiL, d, chiR)
+    A_opt = evecs[:, idx].reshape(chiL, d, chiR)
     return A_opt, E_local
 
 
 # ---------------------------------------------------------------------------
-# Public entry point
+# Public 1-site DMRG (environment-safe but not recommended for production)
 # ---------------------------------------------------------------------------
 
-def finite_dmrg(
-    env:    Environment,
-    mpo:    MPO,
-    mps0:   MPS,
+
+def finite_dmrg_onesite(
+    env: Environment,
+    mpo: MPO,
+    mps0: MPS,
     config: DMRGConfig,
 ) -> DMRGResult:
-    """Finite-size 1-site DMRG.
+    """Finite-size 1-site DMRG with *fixed* bond dimensions.
 
-    The bond dimensions of ``mps0`` are held fixed throughout.  To explore
-    the full chi=``chi_max`` variational manifold, pass an MPS initialised
-    with ``MPS.from_random(L, chi_max, ...)``.
+    This variant rebuilds environments before every local update, ensuring
+    that the effective Hamiltonian is always constructed from the current
+    MPS and MPO. The cost is higher (O(L^2) environment builds per sweep)
+    but the implementation is simple and robust for small systems.
 
-    Parameters
-    ----------
-    env    : System description; ``env.validate_hamiltonian(mpo)`` is called
-             at startup.
-    mpo    : Hamiltonian MPO.
-    mps0   : Initial MPS (right-canonicalised internally).
-    config : :class:`DMRGConfig` instance.
-
-    Returns
-    -------
-    DMRGResult
+    For production use prefer :func:`finite_dmrg_twosite`.
     """
-    # ------------------------------------------------------------------
-    # Validate
-    # ------------------------------------------------------------------
+
+    # Validate basic consistency
     env.validate_hamiltonian(mpo)
     if len(mps0) != mpo.L:
         raise ValueError(f"MPS length {len(mps0)} != MPO length {mpo.L}")
@@ -190,127 +191,345 @@ def finite_dmrg(
 
     L = len(mps0)
 
-    # ------------------------------------------------------------------
-    # Initialise: right-canonicalise
-    # ------------------------------------------------------------------
-    mps   = right_canonicalize(mps0)
-    R_env = build_right_environments(mps, mpo)
-
-    # Left-environment cache: L_env_cache[i] is the left environment
-    # for the bond to the left of site i, shape (chiL, chiL, wL).
-    L_env_cache: list[np.ndarray] = [np.ones((1, 1, 1), dtype=mps.dtype)]
+    # Start from right-canonical form for numerical stability
+    mps = right_canonicalize(mps0)
 
     E_prev = expectation_value_env(mps, mpo)
-    energies:  list[float]     = [E_prev]
-    bond_dims: list[list[int]] = [mps.bond_dims]
+    energies: List[float] = [E_prev]
+    bond_dims: List[List[int]] = [mps.bond_dims]
 
     if config.verbose:
-        print(f"[finite_dmrg] initial energy (after right-canonicalise) = {E_prev:.12f}")
+        print(
+            f"[finite_dmrg_onesite] initial energy (right-canonical) = {E_prev:.12f}"
+        )
 
-    # ------------------------------------------------------------------
-    # Sweep loop
-    # ------------------------------------------------------------------
     for sweep in range(1, config.max_sweeps + 1):
+        # --------------------
+        # Left -> Right
+        # --------------------
+        for i in range(L):
+            # Fresh environments for the *current* MPS
+            L_env = build_left_environments(mps, mpo)
+            R_env = build_right_environments(mps, mpo)
 
-        # ==============================================================
-        # LEFT-TO-RIGHT half-sweep  (sites 0 .. L-2)
-        # ==============================================================
-        for i in range(L - 1):
-            A_i   = mps.tensors[i].data
-            W_i   = mpo.tensors[i].data
-            L_i   = L_env_cache[i]
+            A_i = mps.tensors[i].data
+            W_i = mpo.tensors[i].data
+            L_i = L_env[i]
             R_ip1 = R_env[i + 1]
 
             A_opt, _ = _optimize_site(L_i, W_i, R_ip1, A_i)
 
-            # QR: keep Q (left-orthonormal) at site i, absorb R into i+1
-            Q, R = _qr_left_step(A_opt)
-            _update_tensor(mps, i, Q)
-            B_new = np.tensordot(R, mps.tensors[i + 1].data, axes=([1], [0]))
-            _update_tensor(mps, i + 1, B_new)
-
-            # Grow left environment using the new left-orthonormal Q
-            L_new = np.einsum(
-                "abx,aic,bjd,xijy->cdy",
-                L_i, Q, Q.conj(), W_i,
-                optimize=True,
-            )
-            if len(L_env_cache) <= i + 1:
-                L_env_cache.append(L_new)
+            if i < L - 1:
+                # Move orthogonality centre to the right via QR
+                Q, R = _qr_left_step(A_opt)
+                _update_tensor(mps, i, Q)
+                B_next = np.tensordot(R, mps.tensors[i + 1].data, axes=([1], [0]))
+                _update_tensor(mps, i + 1, B_next)
             else:
-                L_env_cache[i + 1] = L_new
+                # Last site: just normalise
+                nrm = np.linalg.norm(A_opt.ravel())
+                if nrm > 0:
+                    A_opt /= nrm
+                _update_tensor(mps, i, A_opt)
 
-        # Last site L->R: optimise + normalise only (no QR partner)
-        i     = L - 1
-        A_opt, _ = _optimize_site(
-            L_env_cache[i], mpo.tensors[i].data, R_env[i + 1], mps.tensors[i].data
-        )
-        nrm = np.linalg.norm(A_opt.ravel())
-        if nrm > 0:
-            A_opt /= nrm
-        _update_tensor(mps, i, A_opt)
+        # --------------------
+        # Right -> Left
+        # --------------------
+        for i in range(L - 1, -1, -1):
+            L_env = build_left_environments(mps, mpo)
+            R_env = build_right_environments(mps, mpo)
 
-        # ==============================================================
-        # RIGHT-TO-LEFT half-sweep  (sites L-1 .. 1)
-        # ==============================================================
-        R_env_i = np.ones((1, 1, 1), dtype=mps.dtype)   # right boundary
-
-        for offset in range(L - 1):
-            i     = L - 1 - offset
-            A_i   = mps.tensors[i].data
-            W_i   = mpo.tensors[i].data
-            L_i   = L_env_cache[i]
-            R_ip1 = R_env_i
+            A_i = mps.tensors[i].data
+            W_i = mpo.tensors[i].data
+            L_i = L_env[i]
+            R_ip1 = R_env[i + 1]
 
             A_opt, _ = _optimize_site(L_i, W_i, R_ip1, A_i)
 
-            # LQ: keep Q (right-orthonormal) at site i, absorb L into i-1
-            L_mat, Q = _lq_right_step(A_opt)
-            _update_tensor(mps, i, Q)
-            B_new = np.tensordot(mps.tensors[i - 1].data, L_mat, axes=([2], [0]))
-            _update_tensor(mps, i - 1, B_new)
+            if i > 0:
+                # Move orthogonality centre to the left via LQ
+                L_mat, Q = _lq_right_step(A_opt)
+                _update_tensor(mps, i, Q)
+                B_prev = np.tensordot(mps.tensors[i - 1].data, L_mat, axes=([2], [0]))
+                _update_tensor(mps, i - 1, B_prev)
+            else:
+                nrm = np.linalg.norm(A_opt.ravel())
+                if nrm > 0:
+                    A_opt /= nrm
+                _update_tensor(mps, i, A_opt)
 
-            # Grow right environment using the right-orthonormal Q
-            R_env_i = np.einsum(
-                "cdy,aic,bjd,xijy->abx",
-                R_ip1, Q, Q.conj(), W_i,
-                optimize=True,
-            )
-
-        # Site 0 R->L: optimise + normalise only
-        A_opt, _ = _optimize_site(
-            L_env_cache[0], mpo.tensors[0].data, R_env_i, mps.tensors[0].data
-        )
-        nrm = np.linalg.norm(A_opt.ravel())
-        if nrm > 0:
-            A_opt /= nrm
-        _update_tensor(mps, 0, A_opt)
-
-        # Rebuild R_env from the updated MPS for the next L->R pass.
-        # This guarantees environment consistency regardless of how
-        # the tensors changed during this sweep.
-        R_env       = build_right_environments(mps, mpo)
-        L_env_cache = [np.ones((1, 1, 1), dtype=mps.dtype)]
-
-        # ==============================================================
-        # Bookkeeping and convergence check
-        # ==============================================================
+        # --------------------
+        # Convergence check
+        # --------------------
         E_curr = expectation_value_env(mps, mpo)
         energies.append(E_curr)
         bond_dims.append(mps.bond_dims)
 
         if config.verbose:
-            dE  = E_curr - E_prev
+            dE = E_curr - E_prev
             chi = max(mps.bond_dims)
             print(
-                f"[finite_dmrg] sweep {sweep:3d}: "
+                f"[finite_dmrg_onesite] sweep {sweep:3d}: "
                 f"E = {E_curr:.12f}  dE = {dE:+.3e}  chi_max = {chi}"
             )
 
         if abs(E_curr - E_prev) < config.energy_tol:
             if config.verbose:
-                print(f"[finite_dmrg] converged after {sweep} sweeps.")
+                print(f"[finite_dmrg_onesite] converged after {sweep} sweeps.")
             break
         E_prev = E_curr
 
     return DMRGResult(mps=mps, energies=energies, bond_dims=bond_dims)
+
+
+# ---------------------------------------------------------------------------
+# 2-site helpers
+# ---------------------------------------------------------------------------
+
+
+def _build_local_heff_twosite(
+    L_i: np.ndarray,
+    W_i: np.ndarray,
+    W_ip1: np.ndarray,
+    R_ip2: np.ndarray,
+) -> np.ndarray:
+    """Dense 2-site effective Hamiltonian on bond (i, i+1).
+
+    Using index names::
+
+        L_i   : L[a,b,x]
+        W_i   : W_i[x,s1,t1,y]
+        W_ip1 : W_{i+1}[y,s2,t2,z]
+        R_ip2 : R[c,d,z]
+
+    the tensor elements are::
+
+        H[a,s1,s2,c,  b,t1,t2,d]
+            = Σ_{x,y,z} L[a,b,x] W_i[x,s1,t1,y] W_{i+1}[y,s2,t2,z] R[c,d,z]
+
+    The resulting tensor is reshaped to a matrix of size
+    (chiL*d*d*chiR, chiL*d*d*chiR).
+    """
+
+    # Use single-letter indices for einsum: p,q for (s1,t1), r,s for (s2,t2)
+    H_tensor = np.einsum(
+        "abx,xpqy,yrsz,cdz->aprcbqsd",
+        L_i,
+        W_i,
+        W_ip1,
+        R_ip2,
+        optimize=True,
+    )
+
+    chiL, d1, d2, chiR, chiL2, d1p, d2p, chiR2 = H_tensor.shape
+    assert chiL2 == chiL and chiR2 == chiR and d1p == d1 and d2p == d2
+
+    dim = chiL * d1 * d2 * chiR
+    return H_tensor.reshape(dim, dim)
+
+
+def _optimize_bond_twosite(
+    L_i: np.ndarray,
+    W_i: np.ndarray,
+    W_ip1: np.ndarray,
+    R_ip2: np.ndarray,
+    A_i: np.ndarray,
+    A_ip1: np.ndarray,
+) -> Tuple[np.ndarray, float]:
+    """Diagonalise 2-site H_eff and return the optimal 2-site tensor.
+
+    Parameters
+    ----------
+    L_i, W_i, W_ip1, R_ip2 : environments and MPO tensors.
+    A_i, A_ip1             : current site tensors at i and i+1
+                              (shapes (chiL,d,chi_mid) and (chi_mid,d,chiR)).
+
+    Returns
+    -------
+    B_opt : 4-index tensor of shape (chiL, d, d, chiR).
+    E_loc : lowest eigenvalue.
+    """
+
+    chiL = A_i.shape[0]
+    d = A_i.shape[1]
+    chiR = A_ip1.shape[2]
+
+    H_eff = _build_local_heff_twosite(L_i, W_i, W_ip1, R_ip2)
+    evals, evecs = np.linalg.eigh(H_eff)
+    idx = int(np.argmin(evals))
+    E_loc = float(evals[idx])
+
+    B_opt = evecs[:, idx].reshape(chiL, d, d, chiR)
+    return B_opt, E_loc
+
+
+def _svd_split_twosite(
+    B: np.ndarray,
+    chi_max: int,
+    cutoff: float = 0.0,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Split a 2-site tensor into two MPS tensors via SVD.
+
+    Args
+    ----
+    B:
+        4-index tensor of shape (chiL, d1, d2, chiR).
+    chi_max:
+        Maximum allowed bond dimension after truncation.
+    cutoff:
+        (Reserved) spectral cutoff on discarded weight; currently unused.
+
+    Returns
+    -------
+    A_i_new, A_ip1_new
+        New MPS tensors of shapes (chiL, d1, chi_mid) and
+        (chi_mid, d2, chiR).
+    """
+
+    chiL, d1, d2, chiR = B.shape
+    M = B.reshape(chiL * d1, d2 * chiR)
+    U, S, Vh = np.linalg.svd(M, full_matrices=False)
+
+    # Truncate according to chi_max (cutoff hook left for future use)
+    chi_keep = min(chi_max, S.size)
+    U = U[:, :chi_keep]
+    S = S[:chi_keep]
+    Vh = Vh[:chi_keep, :]
+
+    A_i_new = U.reshape(chiL, d1, chi_keep)
+    SV = (S[:, None] * Vh).reshape(chi_keep, d2, chiR)
+
+    return A_i_new, SV
+
+
+# ---------------------------------------------------------------------------
+# Public 2-site DMRG
+# ---------------------------------------------------------------------------
+
+
+def finite_dmrg_twosite(
+    env: Environment,
+    mpo: MPO,
+    mps0: MPS,
+    config: DMRGConfig,
+    truncation: Optional[TruncationPolicy] = None,
+) -> DMRGResult:
+    """Finite-size 2-site DMRG.
+
+    This is the recommended production algorithm: it follows the standard
+    two-site DMRG pattern (as in ITensors and Schollwöck's review), using
+    exact diagonalisation of the local 2-site effective Hamiltonian and an
+    SVD truncation step after each update.
+
+    The maximum bond dimension is taken from ``truncation.max_bond_dim``;
+    when ``truncation`` is ``None``, ``env.effective_truncation`` is used.
+    """
+
+    # Validate basic consistency
+    env.validate_hamiltonian(mpo)
+    if len(mps0) != mpo.L:
+        raise ValueError(f"MPS length {len(mps0)} != MPO length {mpo.L}")
+    if mps0.physical_dims != mpo.physical_dims:
+        raise ValueError(
+            f"MPS phys dims {mps0.physical_dims} != MPO dims {mpo.physical_dims}"
+        )
+
+    if truncation is None:
+        truncation = env.effective_truncation
+    chi_max = truncation.max_bond_dim
+
+    L = len(mps0)
+    if L < 2:
+        raise ValueError("finite_dmrg_twosite requires L >= 2")
+
+    # Work on a materialised copy
+    mps = mps0.copy()
+    mps._assert_materialized()
+
+    E_prev = expectation_value_env(mps, mpo)
+    energies: List[float] = [E_prev]
+    bond_dims: List[List[int]] = [mps.bond_dims]
+
+    if config.verbose:
+        print(f"[finite_dmrg_twosite] initial energy = {E_prev:.12f}")
+
+    for sweep in range(1, config.max_sweeps + 1):
+        # --------------------
+        # Left -> Right over bonds (i,i+1)
+        # --------------------
+        for i in range(L - 1):
+            L_env = build_left_environments(mps, mpo)
+            R_env = build_right_environments(mps, mpo)
+
+            L_i = L_env[i]
+            R_ip2 = R_env[i + 2]
+            W_i = mpo.tensors[i].data
+            W_ip1 = mpo.tensors[i + 1].data
+            A_i = mps.tensors[i].data
+            A_ip1 = mps.tensors[i + 1].data
+
+            B_opt, _ = _optimize_bond_twosite(L_i, W_i, W_ip1, R_ip2, A_i, A_ip1)
+            A_i_new, A_ip1_new = _svd_split_twosite(B_opt, chi_max)
+
+            _update_tensor(mps, i, A_i_new)
+            _update_tensor(mps, i + 1, A_ip1_new)
+
+        # --------------------
+        # Right -> Left over bonds (i,i+1)
+        # --------------------
+        for i in range(L - 2, -1, -1):
+            L_env = build_left_environments(mps, mpo)
+            R_env = build_right_environments(mps, mpo)
+
+            L_i = L_env[i]
+            R_ip2 = R_env[i + 2]
+            W_i = mpo.tensors[i].data
+            W_ip1 = mpo.tensors[i + 1].data
+            A_i = mps.tensors[i].data
+            A_ip1 = mps.tensors[i + 1].data
+
+            B_opt, _ = _optimize_bond_twosite(L_i, W_i, W_ip1, R_ip2, A_i, A_ip1)
+            A_i_new, A_ip1_new = _svd_split_twosite(B_opt, chi_max)
+
+            _update_tensor(mps, i, A_i_new)
+            _update_tensor(mps, i + 1, A_ip1_new)
+
+        # --------------------
+        # Convergence check
+        # --------------------
+        E_curr = expectation_value_env(mps, mpo)
+        energies.append(E_curr)
+        bond_dims.append(mps.bond_dims)
+
+        if config.verbose:
+            dE = E_curr - E_prev
+            chi = max(mps.bond_dims)
+            print(
+                f"[finite_dmrg_twosite] sweep {sweep:3d}: "
+                f"E = {E_curr:.12f}  dE = {dE:+.3e}  chi_max = {chi}"
+            )
+
+        if abs(E_curr - E_prev) < config.energy_tol:
+            if config.verbose:
+                print(f"[finite_dmrg_twosite] converged after {sweep} sweeps.")
+            break
+        E_prev = E_curr
+
+    return DMRGResult(mps=mps, energies=energies, bond_dims=bond_dims)
+
+
+# For backward compatibility, keep the original name pointing to the
+# 1-site variant. Call finite_dmrg_twosite explicitly for production use.
+
+def finite_dmrg(
+    env: Environment,
+    mpo: MPO,
+    mps0: MPS,
+    config: DMRGConfig,
+) -> DMRGResult:
+    """Alias for the original 1-site finite DMRG.
+
+    Prefer :func:`finite_dmrg_twosite` for new code.
+    """
+
+    return finite_dmrg_onesite(env, mpo, mps0, config)
