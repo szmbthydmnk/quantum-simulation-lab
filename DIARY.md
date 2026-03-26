@@ -1,7 +1,8 @@
 # Development Diary
 
 ---
-
+## 2026-03-26 -- v0.2.1
+---
 ## 2026-03-25 -- v0.2.0
 
 Today was a productive session. The main goal was to get finite DMRG working properly — and we actually got there.
