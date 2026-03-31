@@ -7,7 +7,7 @@
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-GPL--3.0-green)](./LICENSE)
 
-**A test-driven tensor network playground for finite-size DMRG and MPS/MPO algorithms on 1D quantum lattice models.**
+**A test-driven tensor network library for finite-size DMRG and MPS/MPO algorithms on 1D quantum lattice models.**
 
 [Installation](#installation) · [Quickstart](#quickstart-ground-state-of-tfim-with-dmrg) · [Features](#features) · [Roadmap](./ROADMAP.md) · [Diary](./DIARY.md)
 
