@@ -1,39 +1,113 @@
-[build-system]
-requires = ["setuptools>=61"]
-build-backend = "setuptools.build_meta"
+name: Auto-tag and publish on merge to main
 
-[project]
-name = "quantum-simulation-lab"
-version = "1.0.1"
-description = "A light, tested tensor-network playground focused on finite-size DMRG for 1D quantum lattice models."
-readme = "README.md"
-requires-python = ">=3.14.0"
-license = { file = "LICENSE" }
-authors = [
-    {name = "Dominik Szombathy"}
-]
-keywords = ["tensor networks", "matrix product states", "dmrg", "quantum simulation"]
-classifiers = [
-  "Development Status :: 3 - Alpha",
-  "Intended Audience :: Science/Research",
-  "License :: OSI Approved :: MIT License",
-  "Programming Language :: Python :: 3",
-  "Programming Language :: Python :: 3.14",
-  "Topic :: Scientific/Engineering :: Physics"
-]
-dependencies = [
-  "numpy",
-  "scipy",
-  "matplotlib",
-]
+on:
+  push:
+    branches:
+      - main
 
-[project.urls]
-Homepage = "https://github.com/szmbthydmnk/quantum-simulation-lab"
-Repository = "https://github.com/szmbthydmnk/quantum-simulation-lab"
+jobs:
+  auto-tag-and-publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
 
-[tool.setuptools.packages.find]
-where = ["."]
-include = ["tensor_network_library*", "examples*"]
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-[tool.pytest.ini_options]
-testpaths = ["tests", "examples"]
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Install build tools
+        run: |
+          python -m pip install --upgrade pip
+          pip install build setuptools
+
+      - name: Compute next patch version
+        id: version
+        run: |
+          LATEST=$(git tag --list 'v*.*.*' --sort=-version:refname | head -n1)
+          if [ -z "$LATEST" ]; then
+            LATEST="v0.0.0"
+          fi
+          echo "Latest tag: $LATEST"
+          VERSION="${LATEST#v}"
+          MAJOR=$(echo "$VERSION" | cut -d. -f1)
+          MINOR=$(echo "$VERSION" | cut -d. -f2)
+          PATCH=$(echo "$VERSION" | cut -d. -f3)
+          NEXT_PATCH=$((PATCH + 1))
+          NEXT_TAG="v${MAJOR}.${MINOR}.${NEXT_PATCH}"
+          echo "Next tag: $NEXT_TAG"
+          echo "tag=$NEXT_TAG" >> "$GITHUB_OUTPUT"
+          echo "version=${MAJOR}.${MINOR}.${NEXT_PATCH}" >> "$GITHUB_OUTPUT"
+
+      - name: Update version in pyproject.toml
+        run: |
+          NEW_VERSION="${{ steps.version.outputs.version }}"
+          # Use Python to edit TOML — avoids sed regex edge cases entirely
+          python - <<EOF
+          import re, pathlib
+          p = pathlib.Path("pyproject.toml")
+          content = p.read_text()
+          content = re.sub(r'^version = ".*"', f'version = "{NEW_VERSION}"', content, flags=re.MULTILINE)
+          p.write_text(content)
+          EOF
+
+      - name: Verify pyproject.toml
+        run: |
+          python - <<'EOF'
+          import tomllib, pathlib
+          data = tomllib.loads(pathlib.Path("pyproject.toml").read_text())
+          name = data["project"]["name"]
+          version = data["project"]["version"]
+          print(f"name={name!r}  version={version!r}")
+          assert name, "name is empty"
+          assert version, "version is empty"
+          EOF
+          echo "--- pyproject.toml contents ---"
+          cat pyproject.toml
+
+      - name: Install package (smoke test)
+        run: pip install -e .
+
+      - name: Run tests
+        run: pip install pytest && pytest
+
+      - name: Build package
+        run: python -m build
+
+      - name: Inspect wheel metadata
+        run: |
+          pip install wheel
+          python - <<'EOF'
+          import zipfile, pathlib, sys
+          wheels = list(pathlib.Path("dist").glob("*.whl"))
+          if not wheels:
+              print("ERROR: no wheel found in dist/")
+              sys.exit(1)
+          with zipfile.ZipFile(wheels[0]) as zf:
+              meta = [n for n in zf.namelist() if n.endswith("METADATA")]
+              if not meta:
+                  print("ERROR: no METADATA file in wheel")
+                  sys.exit(1)
+              content = zf.read(meta[0]).decode()
+              for line in content.splitlines()[:10]:
+                  print(line)
+          EOF
+
+      - name: Create and push tag
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add pyproject.toml
+          git commit -m "chore: bump version to ${{ steps.version.outputs.tag }} [skip ci]"
+          git tag "${{ steps.version.outputs.tag }}"
+          git push origin main --follow-tags
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@v1.10.3
