@@ -4,65 +4,59 @@ High-level plan for `quantum-simulation-lab`. Checked items are merged to `main`
 
 ---
 
-## ✅ v0.1 — Core Tensor Network Layer
+## ✅ v1 — Finite-Size DMRG
 
-The foundational data structures and linear algebra layer.
+Robust 2-site DMRG for qubit and spin-1/2 bosonic chains.
 
 - [x] Package structure with `tensor_network_library/core`
-- [x] `Tensor` class with full linear algebra operations
-- [x] `MPS` — product-state constructor, norm, dense conversion
+- [x] `Tensor`, `Index` — numpy-backed tensors with named indices and full linear algebra
+- [x] `MPS` — product-state, statevector, and qubit-label constructors; canonicalization; SVD truncation
 - [x] `MPO` — identity, apply-to-MPS, dense conversion
-- [x] Unit tests for `Tensor`, `MPS`, and `MPO`
-- [x] GitHub Actions CI — `pytest` on every push and PR
-- [x] Left-, right-, and mixed-canonicalization routines
-- [x] QR decomposition in `Tensor`
-- [x] SVD decomposition without truncation
-- [x] SVD-based `MPS` constructor from dense statevector with `TruncationPolicy`
-
----
-
-## ✅ v0.2 — State Helpers, Environments & Finite DMRG
-
-The algorithmic layer: DMRG converging on all target models.
-
-- [x] Qubit state library (`tensor_network_library/states/qubit_states`) — Pauli, Hadamard, equator, magic states
-- [x] `MPS.from_qubit_labels(...)` initializer
-- [x] `core/site.py` — `QubitSite` and stubs for spin, qutrit, fermion
-- [x] `core/geometry.py` — `FiniteChain` and `InfiniteChain` stub
-- [x] `Environment` — owns geometry and system; exposes `L`, `d`, `bc`, `hilbert_dim`, `effective_truncation`
-- [x] `Hamiltonian.validate_for(env)` wrapper
-- [x] MPO builders — TFIM, Heisenberg (XXZ), random Z-field, random X-field, ZZ+Z
-- [x] Finite 2-site DMRG with incremental left/right environments and correct gauge per sweep direction
-- [x] 315+ tests — unit, integration, dense-reference checks, DMRG regression
+- [x] `TruncationPolicy` — cutoff, max bond dimension, strict mode
+- [x] `Environment` — qubit and spin-1/2 bosonic chain support
+- [x] `core/site.py` — `QubitSite`; stubs for higher spin and fermionic sites
+- [x] `core/geometry.py` — `FiniteChain`
+- [x] MPO builders — TFIM, Heisenberg (XXZ), random Z/X fields, ZZ+Z
+- [x] Finite 2-site DMRG with incremental environments and correct gauge per sweep direction
+- [x] 315+ tests — unit, integration, dense-reference, DMRG regression
 - [x] Cross-validated against iTensor
-- [ ] Entangled-state helpers (Bell pair, GHZ) for tests
+- [x] GitHub Actions CI — pytest, LOC badge, PyPI publish
+- [ ] Entangled-state helpers (Bell pair, GHZ)
 - [ ] Truncation schedule presets (per-sweep bond schedules)
 
 ---
 
-## 🔲 v0.3 — TEBD / iTEBD
+## 🔲 v2 — TEBD / iTEBD
 
-Time evolution on finite and infinite chains.
+Real and imaginary time evolution on finite and infinite chains, with fermionic and higher-spin site support.
 
+- [ ] `FermionSite` (spin-1/2) and `SpinSite` (spin-1) implementations
+- [ ] Jordan-Wigner string handling for fermionic MPOs
 - [ ] Local two-site gate application on MPS
-- [ ] Simple TEBD time-stepper for nearest-neighbor Hamiltonians
-- [ ] Validate TEBD against dense simulations via `to_dense`
-- [ ] Tests for unitarity and norm conservation
-- [ ] iTEBD on infinite chains
+- [ ] Finite TEBD time-stepper for nearest-neighbor Hamiltonians
+- [ ] Imaginary-time TEBD for ground-state preparation
+- [ ] `InfiniteChain` geometry and iTEBD on infinite chains
+- [ ] Validate against dense simulations and known analytical results
+- [ ] Tests for unitarity, norm conservation, and fermionic anti-commutation
 
 ---
 
-## 🔲 v1.0 — Stable Public API
+## 🔲 v3 — 2D Geometries & Long-Range Hamiltonians
 
-- [ ] TEBD + DMRG + iTEBD behind a clean, versioned public API
-- [ ] Full API documentation
-- [ ] Performance benchmarks vs. reference implementations
+2D lattice support via 1D mappings, and MPO compression for long-range interactions.
+
+- [ ] 2D geometries mapped to 1D chains via swap networks
+- [ ] Swap gate layer for non-nearest-neighbour couplings
+- [ ] Long-range MPO construction (exponential fitting / sum-of-exponentials)
+- [ ] Support for ladder and cylinder geometries
+- [ ] Benchmark DMRG ground states on 2D Heisenberg and Hubbard models
 
 ---
 
-## 🔲 v1.5 — Advanced Interfaces (AQA · QML · QEC)
+## 🔲 v4+ — Advanced Interfaces
 
-- [ ] Adiabatic quantum algorithm (AQA/AQOA) interfaces using MPS/MPO
+Exploratory extensions — scope to be defined.
+
+- [ ] Adiabatic quantum algorithm (AQA) interfaces using MPS/MPO
 - [ ] Parameterized gate hooks for quantum machine learning (QML)
 - [ ] QEC encoding/decoding maps as MPOs
-- [ ] Tests on small toy problems for all of the above

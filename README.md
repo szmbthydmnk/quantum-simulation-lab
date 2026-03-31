@@ -108,11 +108,10 @@ The CI badge above reflects the current state of the `main` branch.
 
 | Version | Focus | Status |
 |---------|-------|--------|
-| v0.1 | Core tensor network layer — `Tensor`, `MPS`, `MPO`, canonicalization, SVD | ✅ Done |
-| v0.2 | State helpers, environments, finite DMRG | ✅ Done |
-| v0.3 | TEBD / iTEBD | 🔲 Planned |
-| v1.0 | Stable public API | 🔲 Planned |
-| v1.5 | AQA, QML, QEC interfaces | 🔲 Planned |
+| v1 | Finite-size DMRG — qubit and spin-1/2 bosonic chains | ✅ Done |
+| v2 | TEBD / iTEBD — fermionic and spin-1 environments | 🔲 Planned |
+| v3 | 2D geometries and long-range Hamiltonians | 🔲 Planned |
+| v4+ | Advanced interfaces (AQA, QML, QEC) | 🔲 Exploratory |
 
 See [`ROADMAP.md`](./ROADMAP.md) for detailed per-version task lists and [`DIARY.md`](./DIARY.md) for development notes.
 
