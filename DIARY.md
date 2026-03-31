@@ -2,6 +2,14 @@
 
 A chronological log of design decisions, bugs found, and milestones reached.
 
+
+## v1.0.3 · 2026-03-31
+
+- Added publishing github action. And publishing version v1.0.0+
+- Small testing changes
+- Revised roadmap
+- Added about section, and remade readme in a "modern style".
+
 ---
 
 ## v0.2.1 · 2026-03-26
