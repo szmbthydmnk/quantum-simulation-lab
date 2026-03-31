@@ -4,14 +4,42 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "quantum-simulation-lab"
-version = "0.1.6"
+version = "1.0.0"
+description = "A light, tested tensor-network playground focused on finite-size DMRG for 1D quantum lattice models."
+readme = "README.md"
 requires-python = ">=3.14.0"
+license = { file = "LICENSE" }
+authors = [
+    {name = "Dominik Szombathy"}
+]
+keywords = [
+    "tensor networks",
+    "matrix product states",
+    "dmrg",
+    "quantum many-body",
+    "quantum simulation"
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Scientific/Engineering :: Physics",
+    "Topic :: Scientific/Engineering :: Mathematics"
+]
+
 dependencies = [
     "numpy",
     "scipy",
     "pytest",
     "matplotlib",
 ]
+
+[project.urls]
+Homepage = "https://github.com/szmbthydmnk/quantum-simulation-lab"
+Repository = "https://github.com/szmbthydmnk/quantum-simulation-lab"
+Issues = "https://github.com/szmbthydmnk/quantum-simulation-lab/issues"
 
 [tool.setuptools.packages.find]
 where = ["."]
