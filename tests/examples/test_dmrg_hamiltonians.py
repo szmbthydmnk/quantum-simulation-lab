@@ -12,7 +12,14 @@ import numpy as np
 from tensor_network_library.core.mps import MPS
 from tensor_network_library.core.utils import expectation_value_env
 from tensor_network_library.hamiltonian.operators import sigma_z, embed_operator
-from tensor_network_library.hamiltonian.models import heisenberg_dense, random_field_mpo
+from tensor_network_library.hamiltonian.models import (
+    heisenberg_dense, 
+    random_field_mpo,
+    xxz_mpo,
+    xxz_dense,
+    transverse_heisenberg_mpo,
+    transverse_heisenberg_dense,
+)
 from examples.dmrg_hamiltonians import (
     random_z_field_mpo,
     random_x_field_mpo,
@@ -57,6 +64,43 @@ class TestExampleHamiltonians:
         mpo = zz_plus_z_mpo(L=L, Jz=Jz, h=h)
 
         H_dense = heisenberg_dense(L=L, Jx=0.0, Jy=0.0, Jz=Jz, h=h)
+
+        psi = random_normalized_state(L)
+        mps = MPS.from_statevector(psi, physical_dims=2, normalize=True)
+
+        e_mpo = expectation_value_env(mps, mpo)
+        e_dense = float(np.vdot(psi, H_dense @ psi))
+
+        assert np.allclose(e_mpo, e_dense, atol=1e-10)
+
+
+class TestAdditionalHamiltonians:
+    def test_xxz_matches_dense(self):
+        """XXZ MPO expectation matches the dense XXZ Hamiltonian."""
+        L = 6
+        J = 1.0
+        Delta = 0.7
+        h = 0.2
+
+        mpo = xxz_mpo(L = L, J = J, Delta = Delta, h = h)
+        H_dense = xxz_dense(L = L, J = J, Delta = Delta, h = h)
+
+        psi = random_normalized_state(L)
+        mps = MPS.from_statevector(psi, physical_dims=2, normalize=True)
+
+        e_mpo = expectation_value_env(mps, mpo)
+        e_dense = float(np.vdot(psi, H_dense @ psi))
+
+        assert np.allclose(e_mpo, e_dense, atol=1e-10)
+
+    def test_transverse_heisenberg_matches_dense(self):
+        """Transverse Heisenberg MPO expectation matches dense reference."""
+        L = 3
+        J = 4/3
+        h = 1/3
+
+        mpo = transverse_heisenberg_mpo(L=L, J=J, h=h)
+        H_dense = transverse_heisenberg_dense(L=L, J=J, h=h)
 
         psi = random_normalized_state(L)
         mps = MPS.from_statevector(psi, physical_dims=2, normalize=True)

@@ -378,3 +378,143 @@ def heisenberg_dense(
     for i in range(L):
         H -= h * embed_operator(sigma_z(dtype), site=i, L=L, d=2, dtype=dtype)
     return H
+
+
+# ---------------------------------------------------------------------------
+# Convenience wrappers: XXZ and transverse-field Heisenberg
+# ---------------------------------------------------------------------------
+
+def xxz_mpo(
+        L: int,
+        J: float = 1.0,
+        Delta: float = 1.0,
+        h: float = 0.0,
+        dtype: np.dtype = np.complex128,
+        ) -> MPO:
+    """
+    MPO for the XXZ model::
+
+        H = J Σ_i ( σ_x^i σ_x^{i+1} + σ_y^i σ_y^{i+1} + Δ σ_z^i σ_z^{i+1} )
+          - h Σ_i σ_z^i
+
+    Thin wrapper over :func:`heisenberg_mpo`.
+    """
+
+    return heisenberg_mpo(L = L, Jx = J, Jy = J, Jz = Delta * J, h = h, dtype = dtype)
+
+def xxz_dense(
+        L: int,
+        J: float = 1.0,
+        Delta: float = 1.0,
+        h: float = 0.0,
+        dtype: np.dtype = np.complex128,
+) -> ComplexArray:
+    """
+    Dense XXZ Hamiltonian via :func:'heisenberg_dense'.
+    """
+
+    return heisenberg_dense(L = L, Jx = J, Jy = J, Jz = Delta * J, h = h, dtype = dtype)
+
+def transverse_heisenberg_mpo(
+        L: int,
+        J: float = 1.0,
+        h: float = 0.0,
+        dtype: np.dtype = np.complex128,
+        ) -> MPO:
+    """
+    MPO for the Heisenberg model with a transverse (x) field::
+
+        H = J Σ_i ( σ_x^i σ_x^{i+1}
+                  + σ_y^i σ_y^{i+1}
+                  + σ_z^i σ_z^{i+1} )
+          - h Σ_i σ_x^i
+
+    W-tensor convention (auxiliary bond dim = 5):
+
+        Row/col index meaning
+        ─────────────────────
+        0  =  I  (left boundary / identity carry)
+        1  =  J·Sz  (left leg of ZZ pair)
+        2  =  J·Sy  (left leg of YY pair)
+        3  =  J·Sx  (left leg of XX pair)
+        4  =  I  (right boundary)
+
+    At site 0 (left edge) the input bond dim is 1 so W has shape (1,d,d,5).
+    At site L-1 (right edge) W has shape (5,d,d,1).
+    """
+
+    if L < 2:
+        raise ValueError(f"Transverse Heisenberg MPO requires L >= 2, got L={L}")
+
+    d = 2
+    chi = 5
+    I2 = identity(d, dtype)
+    Sx = sigma_x(dtype)
+    Sy = sigma_y(dtype)
+    Sz = sigma_z(dtype)
+
+    bond_dims = [1] + [chi] * (L - 1) + [1]
+    mpo = MPO(L=L, d=d, bond_policy=bond_dims, dtype=dtype)
+
+    for i in range(L):
+        dl = bond_dims[i]   # left auxiliary bond dim
+        dr = bond_dims[i + 1]  # right auxiliary bond dim
+        W = np.zeros((dl, d, d, dr), dtype=dtype)
+
+        if i == 0:
+            # shape (1, d, d, 5)
+            # Row 0 is the only input row.
+            W[0, :, :, 0] = -h * Sx      # local field  → immediate output
+            W[0, :, :, 1] = J * Sz       # start ZZ pair
+            W[0, :, :, 2] = J * Sy       # start YY pair
+            W[0, :, :, 3] = J * Sx       # start XX pair
+            W[0, :, :, 4] = I2           # pass identity rightward
+
+        elif i == L - 1:
+            # shape (5, d, d, 1)
+            W[0, :, :, 0] = I2           # identity from left boundary
+            W[1, :, :, 0] = Sz           # close ZZ pair
+            W[2, :, :, 0] = Sy           # close YY pair
+            W[3, :, :, 0] = Sx           # close XX pair
+            W[4, :, :, 0] = -h * Sx      # local field at rightmost site
+
+        else:
+            # shape (5, d, d, 5) — bulk sites
+            W[0, :, :, 0] = I2           # pass left boundary identity
+            W[1, :, :, 0] = Sz           # close ZZ pair
+            W[2, :, :, 0] = Sy           # close YY pair
+            W[3, :, :, 0] = Sx           # close XX pair
+            W[4, :, :, 0] = -h * Sx      # local field
+            W[4, :, :, 1] = J * Sz       # start new ZZ pair
+            W[4, :, :, 2] = J * Sy       # start new YY pair
+            W[4, :, :, 3] = J * Sx       # start new XX pair
+            W[4, :, :, 4] = I2           # pass right boundary identity
+
+        mpo.tensors[i].data = W
+
+    return mpo
+
+
+def transverse_heisenberg_dense(
+    L: int,
+    J: float = 1.0,
+    h: float = 0.0,
+    dtype: np.dtype = np.complex128,
+) -> ComplexArray:
+    """
+    Dense transverse Heisenberg Hamiltonian.
+
+    H = J Σ_i ( σ_x^i σ_x^{i+1} + σ_y^i σ_y^{i+1} + σ_z^i σ_z^{i+1} )
+      - h Σ_i σ_x^i
+    """
+    from .operators import embed_operator, embed_two_site_operator, xx, yy, zz
+
+    H = np.zeros((2**L, 2**L), dtype=dtype)
+    for i in range(L - 1):
+        H += J * embed_two_site_operator(xx(dtype), site=i, L=L, d=2, dtype=dtype)
+        H += J * embed_two_site_operator(yy(dtype), site=i, L=L, d=2, dtype=dtype)
+        H += J * embed_two_site_operator(zz(dtype), site=i, L=L, d=2, dtype=dtype)
+    for i in range(L):
+        H -= h * embed_operator(sigma_x(dtype), site=i, L=L, d=2, dtype=dtype)
+    return H
+    
