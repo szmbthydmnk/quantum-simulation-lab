@@ -122,5 +122,5 @@ See [`ROADMAP.md`](./ROADMAP.md) and `DIARY.md` for more detailed development no
 _Last updated automatically by CI:_
 
 <!-- LOC-AUTO-START -->
-4967
+5112
 <!-- LOC-AUTO-END -->
