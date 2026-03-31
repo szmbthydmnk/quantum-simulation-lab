@@ -1,52 +1,68 @@
 # Roadmap
 
-## v0.1 – Core tensor network layer (DONE)
+High-level plan for `quantum-simulation-lab`. Checked items are merged to `main`.
 
-- [x] Package structure with `tensor_network_library/core`.
-- [x] `Tensor` class with basic linear algebra operations.
-- [x] `MPS` class with product-state constructor, norms, and dense conversion.
-- [x] `MPO` class with identity, apply-to-MPS, and dense conversion.
-- [x] Unit tests for Tensor, MPS, and MPO.
-- [x] GitHub Actions CI running `pytest` on pushes and PRs.
-- [x] Add left-, right-, and mixed-canonicalization routines.
-- [x] QR decomposition method in `Tensor`.
-- [x] SVD decomposition without truncation.
-- [x] SVD-based MPS constructor from dense statevector with `TruncationPolicy` (cutoff + `max_bond_dim`).
+---
 
-## v0.2 – State helpers and environments
+## ✅ v0.1 — Core Tensor Network Layer
 
-- [x] Add helper functions for common qubit states (`tensor_network_library/states/qubit_states`).
-- [x] Add an MPS initializer from qubit labels (`MPS.from_qubit_labels`).
-- [ ] Add simple entangled states for tests (e.g. Bell pair, GHZ).
-- [ ] Introduce an environment/config object:
-  - [ ] System type (e.g. spin-1/2, spin-1, qudit).
-  - [ ] System size `L`, local dimension `d`, boundary conditions.
-  - [ ] Truncation policy presets/schedules (e.g. per-sweep bond schedules).
-- [ ] Tests validating shapes, norms, and basic config invariants.
+The foundational data structures and linear algebra layer.
 
-## v0.3 – TEBD / iTEBD scaffolding
+- [x] Package structure with `tensor_network_library/core`
+- [x] `Tensor` class with full linear algebra operations
+- [x] `MPS` — product-state constructor, norm, dense conversion
+- [x] `MPO` — identity, apply-to-MPS, dense conversion
+- [x] Unit tests for `Tensor`, `MPS`, and `MPO`
+- [x] GitHub Actions CI — `pytest` on every push and PR
+- [x] Left-, right-, and mixed-canonicalization routines
+- [x] QR decomposition in `Tensor`
+- [x] SVD decomposition without truncation
+- [x] SVD-based `MPS` constructor from dense statevector with `TruncationPolicy`
 
-- [ ] Implement local two-site gate application on MPS.
-- [ ] Implement a simple TEBD time-stepper for nearest-neighbor Hamiltonians.
-- [ ] Validate TEBD against small dense simulations via `to_dense`.
-- [ ] Add tests for unitarity and norm conservation for short evolutions.
+---
 
-## v0.4 – DMRG building blocks
+## ✅ v0.2 — State Helpers, Environments & Finite DMRG
 
-- [ ] Operator helpers similar to `qubit_states` (single-site ops like X/Y/Z; two-site couplings; utilities to assemble Hamiltonians).
-- [ ] MPO builders for standard 1D models (e.g. transverse-field Ising, Heisenberg).
-- [ ] Canonical forms + environment tensors (left/right blocks) for sweeps.
-- [ ] Implement effective Hamiltonian construction for a single site / two sites.
-- [ ] Integrate a basic eigensolver (SciPy) for local ground-state updates.
-- [ ] Test DMRG ground-state energies against exact diagonalization for small systems.
+The algorithmic layer: DMRG converging on all target models.
 
-## v1.0 – Stable algorithms
+- [x] Qubit state library (`tensor_network_library/states/qubit_states`) — Pauli, Hadamard, equator, magic states
+- [x] `MPS.from_qubit_labels(...)` initializer
+- [x] `core/site.py` — `QubitSite` and stubs for spin, qutrit, fermion
+- [x] `core/geometry.py` — `FiniteChain` and `InfiniteChain` stub
+- [x] `Environment` — owns geometry and system; exposes `L`, `d`, `bc`, `hilbert_dim`, `effective_truncation`
+- [x] `Hamiltonian.validate_for(env)` wrapper
+- [x] MPO builders — TFIM, Heisenberg (XXZ), random Z-field, random X-field, ZZ+Z
+- [x] Finite 2-site DMRG with incremental left/right environments and correct gauge per sweep direction
+- [x] 315+ tests — unit, integration, dense-reference checks, DMRG regression
+- [x] Cross-validated against iTensor
+- [ ] Entangled-state helpers (Bell pair, GHZ) for tests
+- [ ] Truncation schedule presets (per-sweep bond schedules)
 
-- [ ] TEBD + DMRG + iTEBD in a stable public API.
+---
 
-## v1.5 – Advanced features (AQA, QML, QEC, ...)
+## 🔲 v0.3 — TEBD / iTEBD
 
-- [ ] Define interfaces for adiabatic quantum algorithms (AQA/AQOA) using MPS/MPO.
-- [ ] Provide simple QML hooks (e.g. parameterized gates that act on MPS).
-- [ ] Sketch QEC-related structures (e.g. encoding/decoding maps as MPOs).
-- [ ] Extend tests to cover these interfaces on small toy problems.
+Time evolution on finite and infinite chains.
+
+- [ ] Local two-site gate application on MPS
+- [ ] Simple TEBD time-stepper for nearest-neighbor Hamiltonians
+- [ ] Validate TEBD against dense simulations via `to_dense`
+- [ ] Tests for unitarity and norm conservation
+- [ ] iTEBD on infinite chains
+
+---
+
+## 🔲 v1.0 — Stable Public API
+
+- [ ] TEBD + DMRG + iTEBD behind a clean, versioned public API
+- [ ] Full API documentation
+- [ ] Performance benchmarks vs. reference implementations
+
+---
+
+## 🔲 v1.5 — Advanced Interfaces (AQA · QML · QEC)
+
+- [ ] Adiabatic quantum algorithm (AQA/AQOA) interfaces using MPS/MPO
+- [ ] Parameterized gate hooks for quantum machine learning (QML)
+- [ ] QEC encoding/decoding maps as MPOs
+- [ ] Tests on small toy problems for all of the above
