@@ -1,40 +1,71 @@
-name: Build and publish release
+name: Auto-tag and publish on merge to main
 
 on:
-    push:
-        tags:
-            - "v*.*.*"
+  push:
+    branches:
+      - main
 
 jobs:
-  build-and-publish:
+  auto-tag-and-publish:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write   # needed to push the new tag
 
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # full history so we can read all tags
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.14"
 
-      - name: Install build backend
+      - name: Install build tools
         run: |
           python -m pip install --upgrade pip
           pip install build
 
-      - name: Build sdist and wheel
+      - name: Compute next patch version
+        id: version
+        run: |
+          # Get the latest semver tag; fall back to v0.0.0 if none exists
+          LATEST=$(git tag --list 'v*.*.*' --sort=-version:refname | head -n1)
+          if [ -z "$LATEST" ]; then
+            LATEST="v0.0.0"
+          fi
+          echo "Latest tag: $LATEST"
+
+          # Strip leading 'v', split on '.'
+          VERSION="${LATEST#v}"
+          MAJOR=$(echo "$VERSION" | cut -d. -f1)
+          MINOR=$(echo "$VERSION" | cut -d. -f2)
+          PATCH=$(echo "$VERSION" | cut -d. -f3)
+
+          NEXT_PATCH=$((PATCH + 1))
+          NEXT_TAG="v${MAJOR}.${MINOR}.${NEXT_PATCH}"
+          echo "Next tag: $NEXT_TAG"
+          echo "tag=$NEXT_TAG" >> "$GITHUB_OUTPUT"
+          echo "version=${MAJOR}.${MINOR}.${NEXT_PATCH}" >> "$GITHUB_OUTPUT"
+
+      - name: Update version in pyproject.toml
+        run: |
+          sed -i "s/^version = \".*\"/version = \"${{ steps.version.outputs.version }}\"/" pyproject.toml
+
+      - name: Create and push tag
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add pyproject.toml
+          git commit -m "chore: bump version to ${{ steps.version.outputs.tag }} [skip ci]"
+          git tag "${{ steps.version.outputs.tag }}"
+          git push origin main --follow-tags
+
+      - name: Build package
         run: python -m build
 
-      - name: Upload dist artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: dist
-          path: dist/*
-
-      # Optional: publish to PyPI when PYPI_API_TOKEN is configured
       - name: Publish to PyPI
-        if: secrets.PYPI_API_TOKEN != ''
         uses: pypa/gh-action-pypi-publish@v1.10.3
         with:
           password: ${{ secrets.PYPI_API_TOKEN }}
