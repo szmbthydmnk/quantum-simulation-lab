@@ -21,16 +21,15 @@ jobs:
         id: loc
         shell: bash
         run: |
-          # Count non-empty lines in tracked Python files
           LOC=$(git ls-files '*.py' | xargs -r cat | sed '/^\s*$/d' | wc -l)
           echo "loc=$LOC" >> "$GITHUB_OUTPUT"
 
       - name: Update README with LOC
         shell: bash
+        env:
+          LOC: ${{ steps.loc.outputs.loc }}
         run: |
-          LOC=${{ steps.loc.outputs.loc }}
           tmpfile=$(mktemp)
-          # Replace text between LOC-AUTO-START and LOC-AUTO-END
           awk -v loc="$LOC" '
             /<!-- LOC-AUTO-START -->/ {
               print;
@@ -48,4 +47,6 @@ jobs:
       - name: Commit README update
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
-          commit_message: "Update lines of code in README"
+          commit_message: "chore: update lines of code in README"
+          commit_user_name: "github-actions[bot]"
+          commit_user_email: "github-actions[bot]@users.noreply.github.com"
