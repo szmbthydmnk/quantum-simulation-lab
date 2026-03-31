@@ -12,34 +12,32 @@ license = { file = "LICENSE" }
 authors = [
     {name = "Dominik Szombathy"}
 ]
-keywords = [
-    "tensor networks",
-    "matrix product states",
-    "dmrg",
-    "quantum many-body",
-    "quantum simulation"
-]
+keywords = ["tensor networks", "matrix product states", "dmrg", "quantum simulation"]
 classifiers = [
-    "Development Status :: 3 - Alpha",
-    "Intended Audience :: Science/Research",
-    "License :: OSI Approved :: MIT License",
-    "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.14",
-    "Topic :: Scientific/Engineering :: Physics",
-    "Topic :: Scientific/Engineering :: Mathematics"
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Science/Research",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.14",
+  "Topic :: Scientific/Engineering :: Physics"
 ]
-
 dependencies = [
-    "numpy",
-    "scipy",
-    "pytest",
-    "matplotlib",
+  "numpy",
+  "scipy",
+  "matplotlib",
 ]
 
 [project.urls]
 Homepage = "https://github.com/szmbthydmnk/quantum-simulation-lab"
 Repository = "https://github.com/szmbthydmnk/quantum-simulation-lab"
-Issues = "https://github.com/szmbthydmnk/quantum-simulation-lab/issues"
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 where = ["."]
+include = ["tensor_network_library*", "examples*"]
+
+[tool.pytest.ini_options]
+# keep whatever you already have here
