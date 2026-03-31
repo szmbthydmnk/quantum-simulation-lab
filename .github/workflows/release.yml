@@ -47,13 +47,15 @@ jobs:
           echo "version=${MAJOR}.${MINOR}.${NEXT_PATCH}" >> "$GITHUB_OUTPUT"
 
       - name: Update version in pyproject.toml
+        env:
+          NEW_VERSION: ${{ steps.version.outputs.version }}
         run: |
-          NEW_VERSION="${{ steps.version.outputs.version }}"
-          python - <<EOF
-          import re, pathlib
+          python - <<'EOF'
+          import re, pathlib, os
+          new_version = os.environ["NEW_VERSION"]
           p = pathlib.Path("pyproject.toml")
           content = p.read_text()
-          content = re.sub(r'^version = ".*"', f'version = "{NEW_VERSION}"', content, flags=re.MULTILINE)
+          content = re.sub(r'^version = ".*"', f'version = "{new_version}"', content, flags=re.MULTILINE)
           p.write_text(content)
           print("Updated pyproject.toml:")
           print(content)
