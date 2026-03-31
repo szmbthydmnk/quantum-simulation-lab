@@ -21,8 +21,6 @@ Robust 2-site DMRG for qubit and spin-1/2 bosonic chains.
 - [x] 315+ tests — unit, integration, dense-reference, DMRG regression
 - [x] Cross-validated against iTensor
 - [x] GitHub Actions CI — pytest, LOC badge, PyPI publish
-- [ ] Entangled-state helpers (Bell pair, GHZ)
-- [ ] Truncation schedule presets (per-sweep bond schedules)
 
 ---
 
@@ -30,6 +28,8 @@ Robust 2-site DMRG for qubit and spin-1/2 bosonic chains.
 
 Real and imaginary time evolution on finite and infinite chains, with fermionic and higher-spin site support.
 
+- [ ] Entangled-state helpers (Bell pair, GHZ)
+- [ ] Truncation schedule presets (per-sweep bond schedules)
 - [ ] `FermionSite` (spin-1/2) and `SpinSite` (spin-1) implementations
 - [ ] Jordan-Wigner string handling for fermionic MPOs
 - [ ] Local two-site gate application on MPS
