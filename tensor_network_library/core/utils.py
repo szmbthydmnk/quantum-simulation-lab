@@ -183,5 +183,5 @@ def expectation_value_env(mps: MPS, mpo: MPO) -> float:
         W0,
         R1,
         optimize=True,
-    )
+        )
     return float(np.real_if_close(E))
