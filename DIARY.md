@@ -2,6 +2,17 @@
 
 A chronological log of design decisions, bugs found, and milestones reached.
 
+## v1.0.7 • 2026-04-24
+
+## v1.0.6 • 2026-04-23
+
+## v1.0.5 • 2026-04-21
+
+- Added dense statevector helpers for standard entangled state generation (GHZ, Bell, w)
+- Added MPS helpers to generate and initialize entangled states from dense state vectors (Bell, GHZ, w)
+- Added appropriate tests for these above new functions.
+
+---
 
 ## v1.0.3 · 2026-03-31
 

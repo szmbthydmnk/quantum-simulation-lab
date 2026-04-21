@@ -28,7 +28,7 @@ Robust 2-site DMRG for qubit and spin-1/2 bosonic chains.
 
 Real and imaginary time evolution on finite and infinite chains, with fermionic and higher-spin site support.
 
-- [ ] Entangled-state helpers (Bell pair, GHZ)
+- [x] Entangled-state helpers (Bell pair, GHZ)
 - [ ] Truncation schedule presets (per-sweep bond schedules)
 - [ ] `FermionSite` (spin-1/2) and `SpinSite` (spin-1) implementations
 - [ ] Jordan-Wigner string handling for fermionic MPOs
