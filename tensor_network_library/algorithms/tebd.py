@@ -285,3 +285,53 @@ def finite_tebd(mps0: MPS,
             print(f"[finite_tebd] step {step+1}/{config.n_steps}, norm={nrm:.12f}")
 
     return mps
+
+def finite_tebd_imaginary(mps0: MPS,
+                          gates_even: Union[np.ndarray, Sequence[np.ndarray]],
+                          gates_odd: Union[np.ndarray, Sequence[np.ndarray]],
+                          n_steps: int,
+                          truncation: TruncationPolicy | None = None,
+                          verbose: bool = False,
+                          ) -> MPS:
+    """
+    Finite-size nearest-neighbour *imaginary-time* TEBD.
+
+    This is a thin wrapper around :func:`finite_tebd` that interprets the
+    supplied two-site gates as Euclidean evolution operators
+
+        U(Δτ) = exp(-Δτ H_local),
+
+    i.e. without the factor of -i. As these gates are non-unitary, the
+    MPS is *always* normalized after each full step.
+
+    Parameters
+    ----------
+    mps0:
+        Initial MPS (not modified; a copy is evolved).
+    gates_even:
+        Two-site Euclidean gates for even bonds (0,1), (2,3), ...,
+        either a single array of shape (d^2, d^2) or a sequence of such
+        arrays matching the number of even bonds.
+    gates_odd:
+        Same as `gates_even`, but for odd bonds (1,2), (3,4), ...
+    n_steps:
+        Number of full imaginary-time TEBD steps to apply.
+    truncation:
+        Optional truncation policy used at each SVD split. If None, no
+        truncation (full rank) is used.
+    verbose:
+        If True, log the MPS norm after each step.
+
+    Returns
+    -------
+    mps:
+        Evolved MPS after `n_steps` imaginary-time steps.
+    """
+    
+    cfg = TEBDConfig(n_steps=n_steps, normalize=True, verbose=verbose)
+    
+    return finite_tebd(mps0=mps0,
+                       gates_even=gates_even,
+                       gates_odd=gates_odd,
+                       config=cfg,
+                       truncation=truncation)
