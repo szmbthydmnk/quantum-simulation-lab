@@ -141,13 +141,14 @@ def test_finite_tebd_norm_conservation(L: int) -> None:
 
 def test_strang_more_accurate_than_first_order() -> None:
     """
-    For small dt, second-order Strang error should be smaller than
-    first-order error when compared against a small-dt reference.
+    Second-order Strang splitting should be more accurate than first-order
+    Trotter at the same coarse dt, measured against a fine-dt reference.
+    Uses L=6 and dt_coarse=0.5 so Trotter error is well above machine precision.
     """
-    L = 4
+    L = 6
     H = _heisenberg_hamiltonian()
-    dt_coarse = 0.2
-    dt_fine = 0.01
+    dt_coarse = 0.5
+    dt_fine = 0.005
     n_steps_fine = int(round(dt_coarse / dt_fine))
 
     mps0 = _product_mps(L, state="plus")
@@ -173,7 +174,6 @@ def test_strang_more_accurate_than_first_order() -> None:
     assert err2 < err1, (
         f"Expected Strang error ({err2:.6e}) < first-order error ({err1:.6e})"
     )
-
 
 # ---------------------------------------------------------------------------
 # finite_tebd_imaginary — ground state energy
