@@ -36,7 +36,7 @@ def expectation_value(mps: MPS, mpo: MPO) -> float:
     v = mps.to_dense()
     Hv = psi_H.to_dense()
 
-    return float(np.vdot(v, Hv))
+    return np.real(np.vdot(v, Hv))
 
 
 # ---------------------------------------------------------------------------
