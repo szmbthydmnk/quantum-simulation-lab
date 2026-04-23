@@ -551,14 +551,7 @@ def measure_local(
     for i in range(L):
         left_envs.append(env.copy())
         A = tensors[i]                               # (chiL, d, chiR)
-        # advance: env_new[c, c'] = sum_{a,a',s} env[a,a'] A[a,s,c] A*[a',s,c']
-        env = np.einsum("ab,asc,bsd->cd", env, A, A.conj())           # shape (chiR, chiR)
-        # Note: einsum above gives env[c,c'] correctly as a (chiR,chiR) matrix.
-        # The .T is NOT needed — einsum 'ab,asc,bsc->cc' already sums over a,b,s
-        # and leaves two free c indices.  But einsum returns shape (chiR,chiR)
-        # with c as the single repeated label — we need to be explicit:
-        # Redo without shortcut:
-        env = np.einsum("ab,asc,bsd->cd", left_envs[i], A, A.conj())
+        env = np.einsum("ab,asc,bsd->cd", env, A, A.conj())
     # env is now the full norm-squared matrix; trace gives <ψ|ψ>
     norm_sq = float(np.real(np.trace(env)))
 
@@ -572,7 +565,6 @@ def measure_local(
     right_envs[L - 1] = env_r.copy()
     for i in range(L - 2, -1, -1):
         A = tensors[i + 1]                           # (chiL, d, chiR)
-        # advance right: env_new[a, a'] = sum_{s,c,c'} A[a,s,c] env_r[c,c'] A*[a',s,c']
         env_r = np.einsum("asc,cd,bsd->ab", A, env_r, A.conj())
         right_envs[i] = env_r.copy()
 
