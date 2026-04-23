@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
+import scipy.linalg
 
 from tensor_network_library.core.mps import MPS
 from tensor_network_library.algorithms.tebd import (
@@ -142,33 +143,40 @@ def test_finite_tebd_norm_conservation(L: int) -> None:
 def test_strang_more_accurate_than_first_order() -> None:
     """
     Second-order Strang splitting should be more accurate than first-order
-    Trotter at the same coarse dt, measured against a fine-dt reference.
-    Uses L=6 and dt_coarse=0.5 so Trotter error is well above machine precision.
+    Trotter at the same coarse dt, compared against exact matrix exponentiation.
+    Uses a random initial state so Trotter error is not accidentally zero.
     """
-    L = 6
-    H = _heisenberg_hamiltonian()
-    dt_coarse = 0.5
-    dt_fine = 0.005
-    n_steps_fine = int(round(dt_coarse / dt_fine))
+    import scipy.linalg
 
-    mps0 = _product_mps(L, state="plus")
+    rng = np.random.default_rng(42)
+    L = 4
+    d = 2
+    H_local = _heisenberg_hamiltonian()
+    dt_coarse = 0.4
 
-    # Reference: many small first-order steps
-    G_ref = two_site_gate_from_hamiltonian(H, dt_fine)
-    cfg_ref = TEBDConfig(n_steps=n_steps_fine, normalize=True)
-    mps_ref = finite_tebd(mps0, G_ref, G_ref, config=cfg_ref)
-    ref_dense = mps_ref.to_dense()
+    # Random normalized initial statevector
+    psi0 = rng.standard_normal(d**L) + 1j * rng.standard_normal(d**L)
+    psi0 /= np.linalg.norm(psi0)
+    mps0 = MPS.from_statevector(psi0, physical_dims=d, normalize=True, dtype=np.complex128)
 
-    # First-order with coarse dt
-    G1 = two_site_gate_from_hamiltonian(H, dt_coarse)
-    cfg1 = TEBDConfig(n_steps=1, normalize=True)
-    mps1 = finite_tebd(mps0, G1, G1, config=cfg1)
+    # --- Exact reference via full Hamiltonian matrix exp ---
+    H_full = np.zeros((d**L, d**L), dtype=np.complex128)
+    for i in range(L - 1):
+        left = np.eye(d**i, dtype=np.complex128)
+        right = np.eye(d**(L - i - 2), dtype=np.complex128)
+        H_full += np.kron(np.kron(left, H_local), right)
+
+    U_exact = scipy.linalg.expm(-1j * dt_coarse * H_full)
+    ref_dense = U_exact @ psi0
+
+    # --- First-order Trotter ---
+    G1 = two_site_gate_from_hamiltonian(H_local, dt_coarse)
+    mps1 = finite_tebd(mps0, G1, G1, config=TEBDConfig(n_steps=1, normalize=False))
     err1 = np.linalg.norm(mps1.to_dense() - ref_dense)
 
-    # Second-order Strang with coarse dt
-    G_half = two_site_gate_from_hamiltonian(H, dt_coarse / 2)
-    cfg2 = TEBDConfig(n_steps=1, normalize=True)
-    mps2 = finite_tebd_strang(mps0, G1, G_half, G1, config=cfg2)
+    # --- Second-order Strang ---
+    G_half = two_site_gate_from_hamiltonian(H_local, dt_coarse / 2)
+    mps2 = finite_tebd_strang(mps0, G1, G_half, G1, config=TEBDConfig(n_steps=1, normalize=False))
     err2 = np.linalg.norm(mps2.to_dense() - ref_dense)
 
     assert err2 < err1, (
