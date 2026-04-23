@@ -53,7 +53,7 @@ class TestExampleHamiltonians:
         mps = MPS.from_statevector(psi, physical_dims=2, normalize=True)
 
         e_mpo = expectation_value_env(mps, mpo)
-        e_dense = float(np.vdot(psi, H_dense @ psi))
+        e_dense = np.real(np.vdot(psi, H_dense @ psi))
 
         assert np.allclose(e_mpo, e_dense, atol=1e-10)
 
@@ -69,7 +69,7 @@ class TestExampleHamiltonians:
         mps = MPS.from_statevector(psi, physical_dims=2, normalize=True)
 
         e_mpo = expectation_value_env(mps, mpo)
-        e_dense = float(np.vdot(psi, H_dense @ psi))
+        e_dense = np.real(np.vdot(psi, H_dense @ psi))
 
         assert np.allclose(e_mpo, e_dense, atol=1e-10)
 
@@ -89,7 +89,7 @@ class TestAdditionalHamiltonians:
         mps = MPS.from_statevector(psi, physical_dims=2, normalize=True)
 
         e_mpo = expectation_value_env(mps, mpo)
-        e_dense = float(np.vdot(psi, H_dense @ psi))
+        e_dense = np.real(np.vdot(psi, H_dense @ psi))
 
         assert np.allclose(e_mpo, e_dense, atol=1e-10)
 
@@ -106,6 +106,6 @@ class TestAdditionalHamiltonians:
         mps = MPS.from_statevector(psi, physical_dims=2, normalize=True)
 
         e_mpo = expectation_value_env(mps, mpo)
-        e_dense = float(np.vdot(psi, H_dense @ psi))
+        e_dense = np.real(np.vdot(psi, H_dense @ psi))
 
         assert np.allclose(e_mpo, e_dense, atol=1e-10)
