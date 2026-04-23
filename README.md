@@ -161,7 +161,6 @@ The CI badge above reflects the current state of the `main` branch.
 |---------|-------|--------|
 | v1 | Finite-size DMRG — qubit and spin-1/2 chains | ✅ Done |
 | v2 | TEBD / iTEBD — real- and imaginary-time evolution | 🔲 In progress |
-| v3 | 2D geometries and long-range Hamiltonians | 🔲 Planned |
 
 See [`ROADMAP.md`](./ROADMAP.md) for detailed per-version task lists and [`DIARY.md`](./DIARY.md) for development notes.
 
