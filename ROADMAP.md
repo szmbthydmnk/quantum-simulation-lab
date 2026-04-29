@@ -33,10 +33,13 @@ Real and imaginary time evolution on finite and infinite chains.
 - [x] `two_site_gate_from_hamiltonian` — exact diagonalisation gate builder
 - [x] Finite TEBD — first-order Trotter time-stepper
 - [x] Imaginary-time TEBD — ground-state preparation via Euclidean evolution
+- [x] Second-order (Strang) Trotter splitting
+- [x] `measure_local` — single-site expectation values via transfer-matrix sweep
+- [x] `CONVENTIONS.md` — tensor and index ordering documentation
 - [x] Validated against dense simulations
-- [ ] Second-order (Strang) Trotter splitting
 - [ ] `InfiniteChain` geometry and iTEBD on infinite chains
 - [ ] Truncation schedule presets
+- [ ] Benchmark suite: ED vs DMRG, TEBD vs ED, DMRG/TEBD vs iTensor, iTEBD validation
 
 ---
 
