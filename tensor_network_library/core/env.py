@@ -1,3 +1,20 @@
+"""
+Simulation Environment configuration for 1D quantum lattice systems.
+
+Centralises system parameters (chain length, local Hilbert-space dimension,
+boundary conditions, truncation policy) into a single dataclass so that every
+algorithm receives a consistent, validated configuration object.
+
+Axis / index conventions (Schollwöck notation throughout):
+    MPS site tensor : (χ_left, d, χ_right)
+    MPO site tensor : (χ_left, d_in, d_out, χ_right)
+
+Typical usage::
+
+    env = Environment.qubit_chain(L=20, chi_max=64)
+    mpo = tfim_mpo(L=env.L, J=1.0, g=0.5)
+    env.validate_hamiltonian(mpo)
+"""
 from __future__ import annotations
 
 from dataclasses import dataclass, field
