@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import numpy as np
-from typing import Union
+from typing import Tuple, Union
+
 
 # ------------------------------------------------------------------
 # Helpers
@@ -19,7 +20,7 @@ def _norm(v: np.ndarray) -> np.ndarray:
 
 
 # ------------------------------------------------------------------
-# Bell states (2 qubits)
+# Bell states (2 qubits) — legacy simple API
 # ------------------------------------------------------------------
 
 def bell_state(label: str = "phi+") -> np.ndarray:
@@ -51,51 +52,161 @@ def bell_state(label: str = "phi+") -> np.ndarray:
 
 def all_bell_states() -> dict[str, np.ndarray]:
     """Return all four Bell states in a dict."""
-    return {
-        lbl: bell_state(lbl)
-        for lbl in ("phi+", "phi-", "psi+", "psi-")
-    }
+    return {lbl: bell_state(lbl) for lbl in ("phi+", "phi-", "psi+", "psi-")}
 
 
 # ------------------------------------------------------------------
-# GHZ states (n qubits)
+# Bell statevector — embedded into an L-qubit chain
+# ------------------------------------------------------------------
+
+def bell_statevector(
+    L: int,
+    which: str = "phi+",
+    pair: Tuple[int, int] = (0, 1),
+) -> np.ndarray:
+    """
+    Return a Bell state embedded in an L-qubit chain as a dense statevector
+    of length 2**L.  All qubits outside ``pair`` are in |0>.
+
+    Parameters
+    ----------
+    L     : Total number of qubits.
+    which : One of "phi+", "phi-", "psi+", "psi-".
+    pair  : (i, j) with i < j < L — the two qubits that are entangled.
+
+    Returns
+    -------
+    np.ndarray of shape (2**L,), dtype complex128, normalised.
+    """
+    if L < 2:
+        raise ValueError("L must be >= 2.")
+    i, j = int(pair[0]), int(pair[1])
+    if not (0 <= i < j < L):
+        raise ValueError(f"pair must satisfy 0 <= i < j < L, got pair={pair}, L={L}.")
+
+    bell_2q = bell_state(which)  # shape (4,)
+
+    dim = 2 ** L
+    psi = np.zeros(dim, dtype=np.complex128)
+
+    # Iterate over the 4 two-qubit basis states |s_i, s_j>
+    for two_idx in range(4):
+        si = (two_idx >> 1) & 1   # bit 1 -> qubit i
+        sj = (two_idx >> 0) & 1   # bit 0 -> qubit j
+        amp = bell_2q[two_idx]
+        if amp == 0:
+            continue
+        # Build the full L-qubit basis index with si at position i, sj at j, 0 elsewhere
+        full_idx = (si << i) | (sj << j)
+        psi[full_idx] += amp
+
+    return psi
+
+
+# ------------------------------------------------------------------
+# GHZ states
 # ------------------------------------------------------------------
 
 def ghz_state(n: int) -> np.ndarray:
     """
-    Return the n-qubit GHZ state  (|0...0> + |1...1>) / sqrt(2)  as a
+    Return the n-qubit GHZ state (|0...0> + |1...1>) / sqrt(2) as a
     1-D complex vector of length 2**n.
     """
     if n < 2:
         raise ValueError("GHZ state requires n >= 2.")
     dim = 2 ** n
-    v   = np.zeros(dim, dtype=np.complex128)
-    v[0]      = 1.0 / np.sqrt(2.0)   # |00...0>
-    v[dim - 1] = 1.0 / np.sqrt(2.0)  # |11...1>
+    v = np.zeros(dim, dtype=np.complex128)
+    v[0] = 1.0 / np.sqrt(2.0)
+    v[dim - 1] = 1.0 / np.sqrt(2.0)
     return v
 
 
+def ghz_statevector(L: int) -> np.ndarray:
+    """
+    Alias for :func:`ghz_state` using the ``L`` keyword used by tests.
+
+    Returns
+    -------
+    np.ndarray of shape (2**L,), dtype complex128, normalised.
+    """
+    return ghz_state(L)
+
+
 # ------------------------------------------------------------------
-# W states (n qubits)
+# W states
 # ------------------------------------------------------------------
 
 def w_state(n: int) -> np.ndarray:
     """
-    Return the n-qubit W state  (|100...0> + |010...0> + ... + |000...1>) / sqrt(n)
-    as a 1-D complex vector of length 2**n.
+    Return the n-qubit W state as a 1-D complex vector of length 2**n.
     """
     if n < 2:
         raise ValueError("W state requires n >= 2.")
     dim = 2 ** n
-    v   = np.zeros(dim, dtype=np.complex128)
+    v = np.zeros(dim, dtype=np.complex128)
     for k in range(n):
-        # |000...1(at position k)...000>  in little-endian bit ordering
         v[1 << k] = 1.0 / np.sqrt(float(n))
     return v
 
 
+def w_statevector(L: int) -> np.ndarray:
+    """
+    Alias for :func:`w_state` using the ``L`` keyword used by tests.
+
+    Returns
+    -------
+    np.ndarray of shape (2**L,), dtype complex128, normalised.
+    """
+    return w_state(L)
+
+
 # ------------------------------------------------------------------
-# Cluster states (1-D ring or open chain)
+# MPS wrappers
+# ------------------------------------------------------------------
+
+def bell_mps(
+    L: int,
+    which: str = "phi+",
+    pair: Tuple[int, int] = (0, 1),
+):
+    """
+    Return a Bell state embedded in an L-qubit chain as an MPS.
+
+    Built via :func:`bell_statevector` + ``MPS.from_statevector``.
+    The bond dimension is exact (no truncation).
+    """
+    from tensor_network_library.core.mps import MPS
+
+    psi = bell_statevector(L=L, which=which, pair=pair)
+    return MPS.from_statevector(psi, physical_dims=2, name=f"bell_{which}")
+
+
+def ghz_mps(L: int):
+    """
+    Return the L-qubit GHZ state as an MPS.
+
+    Built via :func:`ghz_statevector` + ``MPS.from_statevector``.
+    """
+    from tensor_network_library.core.mps import MPS
+
+    psi = ghz_statevector(L=L)
+    return MPS.from_statevector(psi, physical_dims=2, name="ghz")
+
+
+def w_mps(L: int):
+    """
+    Return the L-qubit W state as an MPS.
+
+    Built via :func:`w_statevector` + ``MPS.from_statevector``.
+    """
+    from tensor_network_library.core.mps import MPS
+
+    psi = w_statevector(L=L)
+    return MPS.from_statevector(psi, physical_dims=2, name="w")
+
+
+# ------------------------------------------------------------------
+# Cluster states
 # ------------------------------------------------------------------
 
 def cluster_state(
@@ -109,22 +220,14 @@ def cluster_state(
     ---------
     1. Start from |+>^n.
     2. Apply CZ between all pairs (i, i+1). If periodic=True also apply (n-1, 0).
-
-    CZ acts on the computational basis as  CZ|s1, s2> = (-1)^{s1 s2} |s1, s2>.
-
-    Returns
-    -------
-    np.ndarray of shape (2**n,), dtype complex128.
     """
     if n < 2:
         raise ValueError("Cluster state requires n >= 2.")
 
-    # Start from |+>^n: every amplitude = 1/sqrt(2^n)
-    dim  = 2 ** n
-    psi  = np.ones(dim, dtype=np.complex128) / np.sqrt(float(dim))
+    dim = 2 ** n
+    psi = np.ones(dim, dtype=np.complex128) / np.sqrt(float(dim))
 
     def _cz(state: np.ndarray, i: int, j: int, n_qubits: int) -> np.ndarray:
-        """Apply CZ_{i,j} in-place."""
         result = state.copy()
         for idx in range(2 ** n_qubits):
             si = (idx >> i) & 1
@@ -133,7 +236,6 @@ def cluster_state(
                 result[idx] *= -1
         return result
 
-    # Apply CZ along the chain
     for i in range(n - 1):
         psi = _cz(psi, i, i + 1, n)
     if periodic:
@@ -143,27 +245,18 @@ def cluster_state(
 
 
 # ------------------------------------------------------------------
-# Dicke states (n qubits, k excitations)
+# Dicke states
 # ------------------------------------------------------------------
 
 def dicke_state(n: int, k: int) -> np.ndarray:
     """
     Return the Dicke state |D^n_k>, the equal superposition of all
     n-qubit basis states with exactly k ones.
-
-    Parameters
-    ----------
-    n : Number of qubits.
-    k : Number of excitations (0 <= k <= n).
-
-    Returns
-    -------
-    np.ndarray of shape (2**n,), dtype complex128, normalized.
     """
     if not (0 <= k <= n):
         raise ValueError(f"k must satisfy 0 <= k <= n, got n={n}, k={k}.")
     dim = 2 ** n
-    v   = np.zeros(dim, dtype=np.complex128)
+    v = np.zeros(dim, dtype=np.complex128)
     for idx in range(dim):
         if bin(idx).count("1") == k:
             v[idx] = 1.0
