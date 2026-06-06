@@ -1,3 +1,20 @@
+"""
+Factory functions for paradigmatic entangled many-body states as MPS.
+
+Provides exact MPS representations of common reference states used in
+benchmarking and as initial states for time-evolution algorithms:
+
+* **GHZ state** – maximally entangled cat state (bond dimension 2)
+* **W state**   – single-excitation superposition (bond dimension 2)
+* **Bell states** – two-qubit Bell pairs embedded in an L-qubit chain
+* **Néel state** – classical antiferromagnetic product state (bond dimension 1)
+
+All functions return a fully materialised :class:`~tensor_network_library.core.mps.MPS`
+with open boundary conditions unless stated otherwise.
+
+Axis conventions match the MPS convention throughout:
+    site tensor shape : (χ_left, d, χ_right)
+"""
 from __future__ import annotations
 
 from typing import Tuple
@@ -39,7 +56,7 @@ def w_statevector(
     r"""
     Dense statevector for the L-qubit W state
 
-        |W_L⟩ = (1/√L) Σ_{k=0}^{L-1} |0…010…0⟩_k,
+        |W_L⟩ = (1/√L) Σ_{k=0}^{L-1} |0…0010…0⟩_k,
 
     i.e., equal superposition of all computational basis states with
     a single excitation.
@@ -104,20 +121,12 @@ def bell_statevector(L: int = 2,
     The Bell pair lives on sites `pair = (i, j)`; all other qubits are |0⟩.
     Sites are 0-based, with site 0 the leftmost qubit.
 
-    Supported `which` labels (case-insensitive):
+    Supported `which` labels (case-insensitive)::
 
         "phi+" : (|00⟩ + |11⟩) / √2
         "phi-" : (|00⟩ - |11⟩) / √2
         "psi+" : (|01⟩ + |10⟩) / √2
         "psi-" : (|01⟩ - |10⟩) / √2
-
-    When embedded into an L-site chain, these act on qubits i and j,
-    with all other qubits frozen in |0⟩.
-
-    Returns
-    -------
-    psi : np.ndarray, shape (2**L,)
-        Normalized statevector.
     """
     
     _validate_chain(L = L, physical_dims = 2)
@@ -148,11 +157,8 @@ def bell_statevector(L: int = 2,
     amp = 1.0 / np.sqrt(2.0)
 
     if which_key.startswith("phi"):
-        # |00> ± |11> on (i,j)
-        # configuration 1: all zeros
         bits.fill(0)
         k1 = _basis_index(bits)
-        # configuration 2: ones on i and j
         bits.fill(0)
         bits[i] = 1
         bits[j] = 1
@@ -161,12 +167,11 @@ def bell_statevector(L: int = 2,
         if which_key == "phi+":
             psi[k1] = amp
             psi[k2] = amp
-        else:  # "phi-"
+        else:
             psi[k1] = amp
             psi[k2] = -amp
 
     else:
-        # psi±: |01> ± |10> on (i,j)
         bits.fill(0)
         bits[i] = 0
         bits[j] = 1
@@ -180,7 +185,7 @@ def bell_statevector(L: int = 2,
         if which_key == "psi+":
             psi[k1] = amp
             psi[k2] = amp
-        else:  # "psi-"
+        else:
             psi[k1] = amp
             psi[k2] = -amp
 
@@ -195,7 +200,7 @@ def bell_mps(L: int = 2,
     """
     Convenience wrapper: build an MPS for a Bell pair embedded in an L-qubit chain.
     
-    See 'bell_statevector' for semantics.
+    See :func:`bell_statevector` for semantics.
     """
     
     psi = bell_statevector(L = L, which = which, pair = pair, dtype=dtype)

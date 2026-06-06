@@ -1,3 +1,25 @@
+"""
+Core Tensor class for labelled multi-dimensional arrays.
+
+Each :class:`Tensor` wraps a NumPy ndarray together with a list of
+:class:`~tensor_network_library.core.index.Index` objects so that
+contraction partners can be identified by index identity rather than
+by positional axis number.
+
+Axis / index conventions:
+    - Axes are ordered left-to-right: (left_bond, physical, right_bond)
+      for MPS sites, and (left_bond, phys_in, phys_out, right_bond) for
+      MPO sites.
+    - Indices carry dimension, name, and tag metadata used for bookkeeping
+      and debugging; they are *not* used for automatic contraction.
+
+Typical usage::
+
+    idx_l = Index(dim=1,  name="L0")
+    idx_p = Index(dim=2,  name="P0", tags={"physical"})
+    idx_r = Index(dim=16, name="R0")
+    t = Tensor(data=np.zeros((1, 2, 16)), indices=[idx_l, idx_p, idx_r])
+"""
 from __future__ import annotations  # Postpone evaluation of type hints
 
 from typing import Tuple, Optional, List
@@ -284,68 +306,64 @@ class Tensor:
         right_shape = (chi,) + tuple([self.shape[i] for i in right_indices])
 
         U_inds = [self.indices[i] for i in left_indices] + [bond_ind]
-        S_inds = [bond_ind]
         Vh_inds = [bond_ind] + [self.indices[i] for i in right_indices]
+        S_inds = [bond_ind, bond_ind]
 
-        U_reshaped = Tensor(U.reshape(left_shape), indices=U_inds)
-        V_reshaped = Tensor(Vh.reshape(right_shape), indices=Vh_inds)
-        S_tensor = Tensor(S.reshape((chi,)), indices=S_inds)
+        U_tensor  = Tensor(U.reshape(left_shape),   indices=U_inds)
+        S_tensor  = Tensor(np.diag(S),              indices=S_inds)
+        Vh_tensor = Tensor(Vh.reshape(right_shape),  indices=Vh_inds)
 
-        return U_reshaped, S_tensor, V_reshaped
+        return U_tensor, S_tensor, Vh_tensor
 
-    def svd(
+    def truncated_svd(
         self,
         left_indices: List[int],
         right_indices: List[int],
-        policy: Optional[TruncationPolicy] = None,
+        truncation: TruncationPolicy | None = None,
     ) -> Tuple["Tensor", "Tensor", "Tensor"]:
+        """
+        Truncated SVD decomposition.
+
+        Perform an SVD and truncate to at most `max_bond_dim` singular values,
+        dropping singular values below `cutoff`.
+
+        Returns (U, S, Vh) as Tensors, where S contains only the kept singular values.
+        """
         self._require_data()
 
-        U, S, Vt = self.svd_decomposition(left_indices, right_indices)
+        all_indices = set(left_indices + right_indices)
+        assert all_indices == set(range(self.ndim)), "All indices must be specified."
 
-        if policy is None:
-            return U, S, Vt
+        perm = left_indices + right_indices
+        data_perm = np.transpose(self.data, perm)
 
-        s_vals = np.asarray(S.data, dtype=float)
-        chi = policy.choose_bond_dim(s_vals)
+        left_dim  = int(np.prod([self.shape[i] for i in left_indices]))
+        right_dim = int(np.prod([self.shape[i] for i in right_indices]))
 
-        # Keep the same bond identity (id) and metadata, only change dim.
-        old_bond = U.indices[-1]
-        new_bond = Index(dim=chi, name=old_bond.name, tags=old_bond.tags, prime=old_bond.prime, id=old_bond.id)
+        mat = data_perm.reshape(left_dim, right_dim)
+        U, S, Vh = svd(mat, full_matrices=False, lapack_driver="gesdd")
 
-        U_trunc = Tensor(U.data[..., :chi], indices=U.indices[:-1] + [new_bond])
-        S_trunc = Tensor(S.data[:chi], indices=[new_bond])
-        V_trunc = Tensor(Vt.data[:chi, ...], indices=[new_bond] + Vt.indices[1:])
+        chi_full = len(S)
+        if truncation is not None:
+            chi = min(truncation.choose_bond_dim(S), chi_full)
+        else:
+            chi = chi_full
 
-        return U_trunc, S_trunc, V_trunc
+        U  = U[:, :chi]
+        S  = S[:chi]
+        Vh = Vh[:chi, :]
 
-    # ----------------------------
-    # Norm utilities
-    # ----------------------------
+        bond_ind = Index(dim=chi, name="SVD_bond", tags=frozenset({"SVD"}))
 
-    def norm(self) -> float:
-        self._require_data()
-        return float(np.linalg.norm(self.data))
+        left_shape  = tuple([self.shape[i] for i in left_indices]) + (chi,)
+        right_shape = (chi,) + tuple([self.shape[i] for i in right_indices])
 
-    def normalize(self) -> "Tensor":
-        self._require_data()
+        U_inds  = [self.indices[i] for i in left_indices] + [bond_ind]
+        Vh_inds = [bond_ind] + [self.indices[i] for i in right_indices]
+        S_inds  = [bond_ind, bond_ind]
 
-        n = self.norm()
-        if n == 0.0:
-            raise ValueError("Cannot normalize a zero-norm tensor.")
-        return Tensor(self.data / n, indices=self.indices.copy())
+        U_tensor  = Tensor(U.reshape(left_shape),   indices=U_inds)
+        S_tensor  = Tensor(np.diag(S),              indices=S_inds)
+        Vh_tensor = Tensor(Vh.reshape(right_shape),  indices=Vh_inds)
 
-    # ----------------------------
-    # Convenience
-    # ----------------------------
-
-    def einsum(self, subscripts: str, *others: "Tensor") -> "Tensor":
-        self._require_data()
-        for t in others:
-            t._require_data()
-
-        arrays = [self.data] + [t.data for t in others]
-        out = np.einsum(subscripts, *arrays)
-
-        # If you want index-aware einsum later, this is where it would go.
-        return Tensor(out)
+        return U_tensor, S_tensor, Vh_tensor

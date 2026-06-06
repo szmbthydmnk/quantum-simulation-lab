@@ -1,5 +1,28 @@
-#
+"""
+Single-qubit and multi-qubit product-state factories.
 
+Provides convenience constructors for standard computational-basis and
+Bloch-sphere states as :class:`~tensor_network_library.core.mps.MPS` objects,
+as well as uniform and domain-wall product-state builders used as initialisers
+for imaginary-time evolution and DMRG.
+
+State catalogue
+---------------
+Single-qubit (returned as length-1 MPS or plain ndarray):
+    ``zero``, ``one``          – |0⟩, |1⟩  (computational basis)
+    ``plus``, ``minus``        – |±⟩ = (|0⟩ ± |1⟩)/√2
+    ``plus_i``, ``minus_i``    – |±i⟩ = (|0⟩ ± i|1⟩)/√2
+
+Multi-qubit product states:
+    ``all_zeros``, ``all_ones``       – uniform ↑↑…↑, ↓↓…↓
+    ``all_plus``                      – uniform |+⟩⊗L (maximal superposition)
+    ``neel``                          – |↑↓↑↓…⟩ (classical Néel order)
+    ``domain_wall``                   – |↑…↑↓…↓⟩ with configurable wall position
+    ``random_product``                – product state with random Bloch angles
+
+Axis conventions:
+    site tensor shape : (χ_left=1, d=2, χ_right=1)  for all product states
+"""
 from __future__ import annotations
 
 from typing import Iterable
@@ -122,147 +145,256 @@ def qubit_state(label: str) -> np.ndarray:
         return qubit_pauli_eigenstates("x+")
     if key in {"-", "x-", "|->"}:
         return qubit_pauli_eigenstates("x-")
-    if key in {"i", "I", "+i", "y+", "|i>"}:
+    if key in {"i", "y+", "|i>"}:
         return qubit_pauli_eigenstates("y+")
-    if key in {"-i", "-I", "y-", "|-i>"}:
+    if key in {"-i", "y-", "|-i>"}:
         return qubit_pauli_eigenstates("y-")
 
-    # Equator by angle:
-    low = key.lower().replace(" ", "")
-    if low.startswith("phi=") or low.startswith("phi:"):
-        expr = low.split("=", 1)[1] if "phi=" in low else low.split(":", 1)[1]
-        phi = _parse_angle(expr)
-        return equator_state(phi)
+    # Magic states (T-type):
+    m = re.fullmatch(r"[Tt](\d+)", key)
+    if m:
+        idx = int(m.group(1))
+        return qubit_magic_state(f"T{idx}")
 
-    if key in {"t", "T"}:
-        return qubit_t_type_magic_states(0)
+    # Magic states (H-type):
+    m = re.fullmatch(r"[Hh](\d+)", key)
+    if m:
+        idx = int(m.group(1))
+        return qubit_magic_state(f"H{idx}")
 
+    # Equator states phi=angle:
+    for sep in ("=", ":"):
+        if key.startswith("phi" + sep) or key.startswith("PHI" + sep):
+            angle_str = key.split(sep, 1)[1]
+            phi = _parse_angle(angle_str)
+            return qubit_equatorial_state(phi)
 
-    # Indexed magic families:
-    if len(key) >= 2 and (key[0] in {"t", "T"}) and key[1:].isdigit():
-        return qubit_t_type_magic_states(int(key[1:]))
-
-    if len(key) >= 2 and (key[0] in {"h", "H"}) and key[1:].isdigit():
-        return qubit_h_type_magic_states(int(key[1:]))
-
-    raise ValueError(f"Unknown qubit state label: {label!r}")
-    
-
-def qubit_pauli_eigenstates(key: str) -> np.ndarray :
-    if key == "x+":
-        return _norm(np.array([1.0, 1.0], dtype = np.complex128))
-    if key == "x-":
-        return _norm(np.array([1.0, -1.0], dtype = np.complex128))
-    if key == "y+":
-        return _norm(np.array([1.0, 1.0j], dtype = np.complex128))
-    if key == "y-":
-        return _norm(np.array([1.0, -1.0j], dtype = np.complex128))
-    if key == "z+":
-        return np.array([1.0, 0.0], dtype = np.complex128)
-    if key == "z-":
-        return np.array([0.0, 1.0], dtype = np.complex128)
-    
-    raise ValueError(f"Unknown qubit pauli egienstate: {key}")
+    raise ValueError(
+        f"Unknown qubit state label: {label!r}. "
+        "Supported: '0','1','+','-','i','-i','z+','z-','x+','x-','y+','y-',"
+        "'H+','H-','H0'..'H11','T0'..'T7','phi=<angle>'."
+    )
 
 
-def qubit_hadamard_eigenstates(sign: str = '+') -> np.ndarray:
-    # Eigenstates of H with eigenvalues plus or minus 1
-    # |H+> = cos(pi/8)|0> + sin(pi/8)|1>
-    # |H-> = cos(pi/8)|0> - sin(pi/8)|1>
-    c = np.cos(np.pi / 8.0)
-    s = np.sin(np.pi / 8.0)
+def qubit_pauli_eigenstates(label: str) -> np.ndarray:
+    """
+    Return normalized eigenstates of Pauli operators.
 
-    if sign in {"+", "plus", "+1", "p"}:
-        return _norm(np.array([c, s], dtype=np.complex128))
-    elif sign in {"-", "minus", "-1", "m"}:
-        return _norm(np.array([s, -c], dtype=np.complex128))
-    raise ValueError(f"Unknown Hadamard sign: {sign!r}")
-    
+    Labels:
+        'z+' -> |0> = [1, 0]
+        'z-' -> |1> = [0, 1]
+        'x+' -> |+> = [1, 1]/sqrt(2)
+        'x-' -> |-> = [1, -1]/sqrt(2)
+        'y+' -> |i> = [1, i]/sqrt(2)
+        'y-' -> |-i> = [1, -i]/sqrt(2)
+    """
+    states = {
+        "z+": np.array([1.0, 0.0], dtype=np.complex128),
+        "z-": np.array([0.0, 1.0], dtype=np.complex128),
+        "x+": np.array([1.0,  1.0], dtype=np.complex128) / np.sqrt(2),
+        "x-": np.array([1.0, -1.0], dtype=np.complex128) / np.sqrt(2),
+        "y+": np.array([1.0,  1j],  dtype=np.complex128) / np.sqrt(2),
+        "y-": np.array([1.0, -1j],  dtype=np.complex128) / np.sqrt(2),
+    }
+    if label not in states:
+        raise ValueError(f"Unknown Pauli eigenstate label: {label!r}. Expected one of {list(states.keys())}.")
+    return states[label]
 
-def equator_state(phi: float) -> np.ndarray:
-    # (|0> + e^{i phi} |1>) / sqrt(2)
+
+def qubit_hadamard_eigenstates(sign: str = "+") -> np.ndarray:
+    """
+    Return the +1 or -1 eigenstate of the Hadamard operator H.
+
+    H = (X + Z) / sqrt(2)
+
+    Eigenvalues: +1 and -1.
+    Eigenstates:
+        +1: cos(pi/8)|0> + sin(pi/8)|1>
+        -1: sin(pi/8)|0> - cos(pi/8)|1>
+    """
+    theta = np.pi / 8.0
+    if sign == "+":
+        return np.array([np.cos(theta), np.sin(theta)], dtype=np.complex128)
+    elif sign == "-":
+        return np.array([np.sin(theta), -np.cos(theta)], dtype=np.complex128)
+    else:
+        raise ValueError(f"sign must be '+' or '-', got {sign!r}")
+
+
+def qubit_magic_state(label: str) -> np.ndarray:
+    """
+    Return a magic state by label.
+
+    Supported labels:
+        T-type: 'T0'..'T7'   -> 8 T-type magic states on the great circle
+                                   between |+> and |T> = cos(pi/8)|0> + e^{i*pi/4} sin(pi/8)|1>
+        H-type: 'H0'..'H11'  -> 12 H-type magic states (vertices of the
+                                    cuboctahedron inscribed in the Bloch sphere)
+
+    Note: T0 is the standard T-magic state.
+    """
+    m_t = re.fullmatch(r"T(\d+)", label)
+    m_h = re.fullmatch(r"H(\d+)", label)
+
+    if m_t:
+        k = int(m_t.group(1)) % 8
+        theta = np.pi / 4.0
+        phi   = k * np.pi / 4.0
+        c = np.cos(theta / 2)
+        s = np.sin(theta / 2)
+        return _norm(np.array([c, np.exp(1j * phi) * s], dtype=np.complex128))
+
+    elif m_h:
+        k = int(m_h.group(1)) % 12
+        bloch_vectors = [
+            (1, 1, 0), (-1, 1, 0), (1, -1, 0), (-1, -1, 0),
+            (1, 0, 1), (-1, 0, 1), (1, 0, -1), (-1, 0, -1),
+            (0, 1, 1), (0, -1, 1), (0, 1, -1), (0, -1, -1),
+        ]
+        return _state_from_bloch(np.array(bloch_vectors[k], dtype=float))
+
+    else:
+        raise ValueError(f"Unknown magic state label: {label!r}. Expected 'T0'..'T7' or 'H0'..'H11'.")
+
+
+def qubit_equatorial_state(phi: float) -> np.ndarray:
+    """
+    Return the equatorial qubit state at azimuthal angle phi:
+
+        |phi> = (|0> + e^{i*phi}|1>) / sqrt(2)
+    """
     return _norm(np.array([1.0, np.exp(1j * phi)], dtype=np.complex128))
-    
 
-def qubit_t_type_magic_states(k: int) -> np.ndarray:
+
+def all_zeros_mps(
+    L: int,
+    d: int = 2,
+    dtype: np.dtype = np.complex128,
+) -> "MPS":
     """
-    8 T-type states: Bloch vectors at cube vertices (±1,±1,±1)/sqrt(3). [web:281]
+    Build a product-state MPS |0 0 ... 0> (all sites in the |0> state).
+
+    Args:
+        L:     Chain length.
+        d:     Physical dimension (default 2).
+        dtype: Data type.
+
+    Returns:
+        MPS representing |0⟩^{⊗L}.
     """
-    k = int(k)
-    if not (0 <= k <= 7):
-        raise ValueError("T-type index k must be in {0,...,7}.")
-
-    sx = 1.0 if ((k >> 0) & 1) == 0 else -1.0
-    sy = 1.0 if ((k >> 1) & 1) == 0 else -1.0
-    sz = 1.0 if ((k >> 2) & 1) == 0 else -1.0
-
-    a = np.array([sx, sy, sz], dtype=float) / np.sqrt(3.0)
-    return _state_from_bloch(a)
+    from tensor_network_library.core.mps import MPS
+    e0 = np.zeros(d, dtype=dtype)
+    e0[0] = 1.0
+    return MPS.product_state([e0] * L, dtype=dtype, name="all_zeros")
 
 
-def qubit_h_type_magic_states(k: int) -> np.ndarray:
+def all_ones_mps(
+    L: int,
+    d: int = 2,
+    dtype: np.dtype = np.complex128,
+) -> "MPS":
     """
-    H-type family from permutations/signs of (1,1,0)/sqrt(2). [web:281]
-    This yields 12 distinct Bloch directions:
-      (±1,±1,0), (±1,0,±1), (0,±1,±1) all /sqrt(2).
+    Build a product-state MPS |1 1 ... 1> (all sites in the |1> state).
+
+    Args:
+        L:     Chain length.
+        d:     Physical dimension (default 2).
+        dtype: Data type.
+
+    Returns:
+        MPS representing |1⟩^{⊗L}.
     """
-    vecs: list[np.ndarray] = []
-    base_patterns = [
-        (1.0, 1.0, 0.0),
-        (1.0, 0.0, 1.0),
-        (0.0, 1.0, 1.0),
-    ]
-    signs = [(1.0, 1.0), (1.0, -1.0), (-1.0, 1.0), (-1.0, -1.0)]
-
-    for bx, by, bz in base_patterns:
-        for s1, s2 in signs:
-            if bz == 0.0:
-                a = np.array([s1 * bx, s2 * by, 0.0], dtype=float)
-            elif by == 0.0:
-                a = np.array([s1 * bx, 0.0, s2 * bz], dtype=float)
-            else:
-                a = np.array([0.0, s1 * by, s2 * bz], dtype=float)
-            vecs.append(a / np.sqrt(2.0))
-
-    k = int(k)
-    if not (0 <= k < len(vecs)):
-        raise ValueError(f"H-type index k must be in {{0,...,{len(vecs)-1}}}.")
-    return _state_from_bloch(vecs[k])
+    from tensor_network_library.core.mps import MPS
+    e1 = np.zeros(d, dtype=dtype)
+    e1[1 % d] = 1.0
+    return MPS.product_state([e1] * L, dtype=dtype, name="all_ones")
 
 
-def qubit_max_magic_states(k: int) -> np.ndarray:
+def neel_mps(
+    L: int,
+    dtype: np.dtype = np.complex128,
+    start: int = 0,
+) -> "MPS":
     """
-    Alias for the 8 maximal-magic (T-type) qubit states.
+    Build the classical Néel state |01010101...⟩ or |10101010...⟩.
+
+    Args:
+        L:     Chain length.
+        dtype: Data type.
+        start: 0 starts with |0⟩ (even sites |0⟩, odd sites |1⟩);
+               1 starts with |1⟩ (even sites |1⟩, odd sites |0⟩).
+
+    Returns:
+        MPS representing the Néel state.
     """
-    return qubit_t_type_magic_states(k)
+    from tensor_network_library.core.mps import MPS
+    d = 2
+    states = []
+    for i in range(L):
+        v = np.zeros(d, dtype=dtype)
+        v[(i + start) % 2] = 1.0
+        states.append(v)
+    return MPS.product_state(states, dtype=dtype, name=f"neel_start{start}")
 
 
-def qubit_states(labels: Iterable[str]) -> list[np.ndarray]:
-    return [qubit_state(x) for x in labels]
+def domain_wall_mps(
+    L: int,
+    wall: int | None = None,
+    dtype: np.dtype = np.complex128,
+) -> "MPS":
+    """
+    Build a domain-wall state |↑…↑↓…↓⟩.
+
+    The first `wall` sites are in state |0⟩ (↑) and the remaining
+    L - wall sites are in state |1⟩ (↓).
+
+    Args:
+        L:    Chain length.
+        wall: Number of up-spin sites (default L//2).
+        dtype: Data type.
+
+    Returns:
+        MPS representing the domain-wall state.
+    """
+    from tensor_network_library.core.mps import MPS
+    if wall is None:
+        wall = L // 2
+    if not (0 <= wall <= L):
+        raise ValueError(f"wall={wall} must be in [0, L={L}].")
+    d = 2
+    states = []
+    for i in range(L):
+        v = np.zeros(d, dtype=dtype)
+        v[0 if i < wall else 1] = 1.0
+        states.append(v)
+    return MPS.product_state(states, dtype=dtype, name=f"domain_wall_w{wall}")
 
 
-# Put near the bottom of the module
-def available_qubit_state_labels() -> list[str]:
-    labels:list[str] = []
+def random_product_mps(
+    L: int,
+    seed: int | None = None,
+    dtype: np.dtype = np.complex128,
+) -> "MPS":
+    """
+    Build a random product-state MPS.
 
-    # Pauli / common aliases
-    labels += ["0", "1", "+", "-", "i", "-i", "I", "-I"]
+    Each site is an independent random pure qubit state drawn uniformly
+    from the Bloch sphere (Haar measure on SU(2)).
 
-    # Hadamard eigenstates (and your "H" alias)
-    labels += ["h+", "h-", "H+", "H-", "H"]
+    Args:
+        L:    Chain length.
+        seed: Optional random seed.
+        dtype: Data type.
 
-    # T-type and H-type indexed families
-    labels += [f"t{k}" for k in range(8)]
-    labels += [f"h{k}" for k in range(12)]
-
-    # Equator syntax (examples, since it's infinite)
-    labels += ["phi=pi/4", "phi:pi/7"]
-
-    return labels
-
-
-def print_available_qubit_states() -> None:
-    labs = available_qubit_state_labels()
-    print("Available qubit state labels:")
-    for s in labs:
-        print(f"  {s}")
+    Returns:
+        MPS representing a random product state.
+    """
+    from tensor_network_library.core.mps import MPS
+    rng = np.random.default_rng(seed)
+    states = []
+    for _ in range(L):
+        v = rng.standard_normal(2) + 1j * rng.standard_normal(2)
+        v = v.astype(np.complex128)
+        v /= np.linalg.norm(v)
+        states.append(v.astype(dtype))
+    return MPS.product_state(states, dtype=dtype, name="random_product")
