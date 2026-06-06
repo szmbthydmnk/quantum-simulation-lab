@@ -9,6 +9,7 @@ import scipy.linalg
 from tensor_network_library.core.mps import MPS
 from tensor_network_library.algorithms.tebd import (
     TEBDConfig,
+    TEBDResult,
     two_site_gate_from_hamiltonian,
     two_site_gate_imaginary,
     apply_two_site_gate,
@@ -60,6 +61,72 @@ def _product_mps(L: int, state: str = "up", dtype=np.complex128) -> MPS:
         psi = np.kron(psi, v)
 
     return MPS.from_statevector(psi, physical_dims=2, normalize=True, dtype=dtype)
+
+
+# ---------------------------------------------------------------------------
+# TEBDResult
+# ---------------------------------------------------------------------------
+
+
+def test_tebd_result_fields() -> None:
+    """TEBDResult carries the correct mps, n_steps and norm_history."""
+    L = 4
+    mps = _product_mps(L, state="plus")
+    H = _tfim_hamiltonian()
+    dt = 0.05
+    n = 10
+    G = two_site_gate_from_hamiltonian(H, dt)
+    result = finite_tebd(mps, G, G, config=TEBDConfig(n_steps=n, normalize=False))
+
+    assert isinstance(result, TEBDResult)
+    assert isinstance(result.mps, MPS)
+    assert result.n_steps == n
+    assert len(result.norm_history) == n
+    # Unitary gates + no truncation: norms must all be ≈ 1
+    assert all(np.isclose(v, 1.0, atol=1e-8) for v in result.norm_history)
+
+
+def test_tebd_result_energy_history_empty_by_default() -> None:
+    """energy_history is an empty list when no measure_fn is supplied."""
+    L = 4
+    mps = _product_mps(L, state="plus")
+    H = _heisenberg_hamiltonian()
+    G = two_site_gate_imaginary(H, dtau=0.05)
+    result = finite_tebd_imaginary(mps, G, G, n_steps=5)
+    assert result.energy_history == []
+
+
+def test_tebd_result_energy_history_populated_with_measure_fn() -> None:
+    """energy_history has length n_steps when measure_fn is supplied."""
+    L = 4
+    n = 8
+    H_local = _heisenberg_hamiltonian()
+    mps = _product_mps(L, state="plus")
+    G = two_site_gate_imaginary(H_local, dtau=0.05)
+
+    # Simple bond-energy estimator via two-site reduced density matrix
+    def energy_fn(m: MPS) -> float:
+        Sz = 0.5 * np.array([[1, 0], [0, -1]], dtype=np.complex128)
+        return float(np.sum(measure_local(m, Sz)))
+
+    result = finite_tebd_imaginary(mps, G, G, n_steps=n, measure_fn=energy_fn)
+    assert len(result.energy_history) == n
+    assert all(isinstance(v, float) for v in result.energy_history)
+
+
+def test_strang_result_norm_history_length() -> None:
+    """finite_tebd_strang result carries norm_history of the correct length."""
+    L = 4
+    n = 6
+    H = _heisenberg_hamiltonian()
+    dt = 0.1
+    G_full = two_site_gate_from_hamiltonian(H, dt)
+    G_half = two_site_gate_from_hamiltonian(H, dt / 2)
+    mps = _product_mps(L, state="plus")
+    result = finite_tebd_strang(mps, G_full, G_half, G_full, config=TEBDConfig(n_steps=n))
+    assert isinstance(result, TEBDResult)
+    assert result.n_steps == n
+    assert len(result.norm_history) == n
 
 
 # ---------------------------------------------------------------------------
@@ -131,8 +198,8 @@ def test_finite_tebd_norm_conservation(L: int) -> None:
     G_even = two_site_gate_from_hamiltonian(H, dt)
     G_odd = two_site_gate_from_hamiltonian(H, dt)
     cfg = TEBDConfig(n_steps=20, normalize=False)
-    mps_out = finite_tebd(mps, G_even, G_odd, config=cfg)
-    assert np.isclose(mps_out.norm(), 1.0, atol=1e-8)
+    result = finite_tebd(mps, G_even, G_odd, config=cfg)
+    assert np.isclose(result.mps.norm(), 1.0, atol=1e-8)
 
 
 # ---------------------------------------------------------------------------
@@ -171,13 +238,13 @@ def test_strang_more_accurate_than_first_order() -> None:
 
     # --- First-order Trotter ---
     G1 = two_site_gate_from_hamiltonian(H_local, dt_coarse)
-    mps1 = finite_tebd(mps0, G1, G1, config=TEBDConfig(n_steps=1, normalize=False))
-    err1 = np.linalg.norm(mps1.to_dense() - ref_dense)
+    result1 = finite_tebd(mps0, G1, G1, config=TEBDConfig(n_steps=1, normalize=False))
+    err1 = np.linalg.norm(result1.mps.to_dense() - ref_dense)
 
     # --- Second-order Strang ---
     G_half = two_site_gate_from_hamiltonian(H_local, dt_coarse / 2)
-    mps2 = finite_tebd_strang(mps0, G1, G_half, G1, config=TEBDConfig(n_steps=1, normalize=False))
-    err2 = np.linalg.norm(mps2.to_dense() - ref_dense)
+    result2 = finite_tebd_strang(mps0, G1, G_half, G1, config=TEBDConfig(n_steps=1, normalize=False))
+    err2 = np.linalg.norm(result2.mps.to_dense() - ref_dense)
 
     assert err2 < err1, (
         f"Expected Strang error ({err2:.6e}) < first-order error ({err1:.6e})"
@@ -203,7 +270,8 @@ def test_imaginary_tebd_energy_convergence_heisenberg_L4() -> None:
     G_even = two_site_gate_imaginary(H_local, dtau)
     G_odd = two_site_gate_imaginary(H_local, dtau)
 
-    mps_gs = finite_tebd_imaginary(mps, G_even, G_odd, n_steps=n_steps)
+    result = finite_tebd_imaginary(mps, G_even, G_odd, n_steps=n_steps)
+    mps_gs = result.mps
 
     # Measure energy as <ZZ> + <XX> + <YY> on each bond
     Z = np.array([[1, 0], [0, -1]], dtype=np.complex128)
@@ -217,6 +285,9 @@ def test_imaginary_tebd_energy_convergence_heisenberg_L4() -> None:
 
     # Simple check: evolved MPS is normalized
     assert np.isclose(mps_gs.norm(), 1.0, atol=1e-8)
+    # result carries the correct metadata
+    assert result.n_steps == n_steps
+    assert len(result.norm_history) == n_steps
 
 
 # ---------------------------------------------------------------------------

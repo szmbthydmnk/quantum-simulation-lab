@@ -25,7 +25,7 @@ Hamiltonian (e.g. XXZ, TFIM) is handled elsewhere.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Callable, List, Optional, Sequence, Tuple, Union
 
 import numpy as np
@@ -61,6 +61,39 @@ class TEBDConfig:
     n_steps: int
     normalize: bool = True
     verbose: bool = False
+
+
+# ---------------------------------------------------------------------------
+# Result
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class TEBDResult:
+    """
+    Return object for all finite-size TEBD sweepers.
+
+    Attributes
+    ----------
+    mps:
+        The evolved MPS after all Trotter steps.
+    n_steps:
+        Number of full Trotter steps actually performed.
+    norm_history:
+        MPS norm recorded *after* each full step (before any explicit
+        re-normalisation). For unitary evolution without truncation this
+        should remain ≈ 1; for imaginary-time evolution it tracks the
+        raw norm decay before the in-loop normalisation is applied.
+    energy_history:
+        Optional per-step energy estimates.  Populated only when a
+        ``measure_fn`` is passed to :func:`finite_tebd_imaginary`;
+        empty list otherwise.
+    """
+
+    mps: MPS
+    n_steps: int
+    norm_history: List[float] = field(default_factory=list)
+    energy_history: List[float] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -271,7 +304,7 @@ def finite_tebd(
     gates_odd: Union[np.ndarray, Sequence[np.ndarray]],
     config: TEBDConfig,
     truncation: TruncationPolicy | None = None,
-) -> MPS:
+) -> TEBDResult:
     """
     Finite-size nearest-neighbour TEBD with first-order Trotter splitting.
 
@@ -299,8 +332,10 @@ def finite_tebd(
 
     Returns
     -------
-    mps:
-        Evolved MPS after `config.n_steps` Trotter steps.
+    result : TEBDResult
+        ``result.mps`` is the evolved MPS after ``config.n_steps`` Trotter
+        steps. ``result.norm_history`` contains the MPS norm recorded after
+        each full step (before any explicit re-normalisation).
     """
     if config.n_steps <= 0:
         raise ValueError("config.n_steps must be a positive integer")
@@ -321,6 +356,8 @@ def finite_tebd(
     layer_even = _prepare_layer_gates(gates_even, L=L, offset=0, d=d)
     layer_odd = _prepare_layer_gates(gates_odd, L=L, offset=1, d=d)
 
+    norm_history: List[float] = []
+
     for step in range(config.n_steps):
         for bond, G in layer_even:
             apply_two_site_gate(mps, G, bond=bond, truncation=truncation)
@@ -328,14 +365,16 @@ def finite_tebd(
         for bond, G in layer_odd:
             apply_two_site_gate(mps, G, bond=bond, truncation=truncation)
 
+        nrm = mps.norm()
+        norm_history.append(float(nrm))
+
         if config.normalize:
             mps.normalize()
 
         if config.verbose:
-            nrm = mps.norm()
             print(f"[finite_tebd] step {step+1}/{config.n_steps}, norm={nrm:.12f}")
 
-    return mps
+    return TEBDResult(mps=mps, n_steps=config.n_steps, norm_history=norm_history)
 
 
 def finite_tebd_strang(
@@ -345,7 +384,7 @@ def finite_tebd_strang(
     gates_odd: Union[np.ndarray, Sequence[np.ndarray]],
     config: TEBDConfig,
     truncation: TruncationPolicy | None = None,
-) -> MPS:
+) -> TEBDResult:
     """
     Finite-size nearest-neighbour TEBD with second-order (Strang) Trotter.
 
@@ -384,8 +423,10 @@ def finite_tebd_strang(
 
     Returns
     -------
-    mps:
-        Evolved MPS after `config.n_steps` second-order Trotter steps.
+    result : TEBDResult
+        ``result.mps`` is the evolved MPS after ``config.n_steps``
+        second-order Trotter steps. ``result.norm_history`` contains the
+        MPS norm recorded after each full step.
     """
     if config.n_steps <= 0:
         raise ValueError("config.n_steps must be a positive integer")
@@ -407,6 +448,8 @@ def finite_tebd_strang(
     layer_even_half = _prepare_layer_gates(gates_even_half, L=L, offset=0, d=d)
     layer_odd = _prepare_layer_gates(gates_odd, L=L, offset=1, d=d)
 
+    norm_history: List[float] = []
+
     for step in range(config.n_steps):
         # dt/2 on even bonds
         for bond, G in layer_even_half:
@@ -420,17 +463,19 @@ def finite_tebd_strang(
         for bond, G in layer_even_half:
             apply_two_site_gate(mps, G, bond=bond, truncation=truncation)
 
+        nrm = mps.norm()
+        norm_history.append(float(nrm))
+
         if config.normalize:
             mps.normalize()
 
         if config.verbose:
-            nrm = mps.norm()
             print(
                 f"[finite_tebd_strang] step {step+1}/{config.n_steps}, "
                 f"norm={nrm:.12f}"
             )
 
-    return mps
+    return TEBDResult(mps=mps, n_steps=config.n_steps, norm_history=norm_history)
 
 
 def finite_tebd_imaginary(
@@ -440,7 +485,8 @@ def finite_tebd_imaginary(
     n_steps: int,
     truncation: TruncationPolicy | None = None,
     verbose: bool = False,
-) -> MPS:
+    measure_fn: Optional[Callable[[MPS], float]] = None,
+) -> TEBDResult:
     """
     Finite-size nearest-neighbour imaginary-time TEBD.
 
@@ -465,20 +511,81 @@ def finite_tebd_imaginary(
     truncation:
         Optional truncation policy.
     verbose:
-        If True, log the MPS norm after each step.
+        If True, log the MPS norm (and energy, if measure_fn is given)
+        after each step.
+    measure_fn:
+        Optional callable ``(mps: MPS) -> float`` invoked on the
+        (normalised) MPS after every step.  Intended for in-loop energy
+        tracking; the returned values are stored in
+        ``TEBDResult.energy_history``.
+
+        Example::
+
+            def energy(mps):
+                return float(np.sum(measure_bond_energies(mps, H_local)))
+
+            result = finite_tebd_imaginary(..., measure_fn=energy)
+            plt.plot(result.energy_history)
 
     Returns
     -------
-    mps:
-        Evolved MPS after `n_steps` imaginary-time steps.
+    result : TEBDResult
+        ``result.mps`` is the evolved MPS. ``result.norm_history``
+        records the raw norm *before* renormalisation at each step.
+        ``result.energy_history`` is populated when ``measure_fn`` is
+        provided; empty list otherwise.
     """
-    cfg = TEBDConfig(n_steps=n_steps, normalize=True, verbose=verbose)
-    return finite_tebd(
-        mps0=mps0,
-        gates_even=gates_even,
-        gates_odd=gates_odd,
-        config=cfg,
-        truncation=truncation,
+    if n_steps <= 0:
+        raise ValueError("n_steps must be a positive integer")
+
+    mps = mps0.copy()
+    L = len(mps)
+
+    if L < 2:
+        raise ValueError("finite_tebd_imaginary requires L >= 2")
+
+    phys_dims = mps.physical_dims
+    if len(set(phys_dims)) != 1:
+        raise ValueError(
+            f"finite_tebd_imaginary currently assumes uniform physical dimension, "
+            f"got {phys_dims}"
+        )
+    d = phys_dims[0]
+
+    layer_even = _prepare_layer_gates(gates_even, L=L, offset=0, d=d)
+    layer_odd = _prepare_layer_gates(gates_odd, L=L, offset=1, d=d)
+
+    norm_history: List[float] = []
+    energy_history: List[float] = []
+
+    for step in range(n_steps):
+        for bond, G in layer_even:
+            apply_two_site_gate(mps, G, bond=bond, truncation=truncation)
+
+        for bond, G in layer_odd:
+            apply_two_site_gate(mps, G, bond=bond, truncation=truncation)
+
+        nrm = mps.norm()
+        norm_history.append(float(nrm))
+
+        # Always normalise: imaginary-time gates are non-unitary
+        mps.normalize()
+
+        if measure_fn is not None:
+            energy = measure_fn(mps)
+            energy_history.append(float(energy))
+
+        if verbose:
+            msg = f"[finite_tebd_imaginary] step {step+1}/{n_steps}, norm={nrm:.12f}"
+            if measure_fn is not None:
+                msg += f", energy={energy_history[-1]:.12f}"
+            print(msg)
+
+    return TEBDResult(
+        mps=mps,
+        n_steps=n_steps,
+        norm_history=norm_history,
+        energy_history=energy_history,
     )
 
 
