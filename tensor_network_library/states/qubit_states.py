@@ -176,6 +176,26 @@ def qubit_state(label: str) -> np.ndarray:
     )
 
 
+def qubit_states(labels: Iterable[str]) -> list[np.ndarray]:
+    """
+    Return a list of normalized 1-qubit statevectors for a sequence of labels.
+
+    This is the batch counterpart of :func:`qubit_state`.  Each label is
+    resolved independently; the result order matches the input order.
+
+    Args:
+        labels: Iterable of label strings accepted by :func:`qubit_state`.
+
+    Returns:
+        List of 1-D complex128 arrays, one per label.
+
+    Example::
+
+        vecs = qubit_states(["0", "+", "T0", "phi=pi/4"])
+    """
+    return [qubit_state(lbl) for lbl in labels]
+
+
 def qubit_pauli_eigenstates(label: str) -> np.ndarray:
     """
     Return normalized eigenstates of Pauli operators.
