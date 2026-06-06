@@ -87,7 +87,7 @@ def test_tebd_tfim_quench_matches_dense_for_small_dt() -> None:
     trunc = TruncationPolicy(max_bond_dim=2 ** (L // 2))
     config = TEBDConfig(n_steps=1, normalize=False, verbose=False)
 
-    mps_tebd = finite_tebd(
+    result = finite_tebd(
         mps0=mps0,
         gates_even=U_two,
         gates_odd=U_two,
@@ -95,7 +95,7 @@ def test_tebd_tfim_quench_matches_dense_for_small_dt() -> None:
         truncation=trunc,
     )
 
-    psi_tebd = mps_tebd.to_dense()
+    psi_tebd = result.mps.to_dense()
 
     # Compare up to first-order Trotter error.
     # For L=4, J=1, g=1.3, dt=1e-3, the first-order Lie-Trotter splitting
