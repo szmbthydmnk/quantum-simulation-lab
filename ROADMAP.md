@@ -24,22 +24,33 @@ Robust 2-site DMRG for qubit and spin-1/2 bosonic chains.
 
 ---
 
-## 🔲 v2 — TEBD / iTEBD
+## ✅ v2 — TEBD
 
-Real and imaginary time evolution on finite and infinite chains.
+Real and imaginary-time evolution on finite chains.
 
 - [x] Entangled-state helpers — Bell pair (all 4 states), GHZ, W (dense + MPS wrappers)
 - [x] Local two-site gate application on MPS
 - [x] `two_site_gate_from_hamiltonian` — exact diagonalisation gate builder
+- [x] `two_site_gate_imaginary` — Euclidean gate builder for imaginary-time evolution
 - [x] Finite TEBD — first-order Trotter time-stepper
+- [x] Finite TEBD — second-order (Strang) Trotter splitting
 - [x] Imaginary-time TEBD — ground-state preparation via Euclidean evolution
-- [x] Second-order (Strang) Trotter splitting
+- [x] `ground_state_search` — high-level ground-state search with convergence tracking
 - [x] `measure_local` — single-site expectation values via transfer-matrix sweep
+- [x] `measure_bond_energies` — two-site energy expectations via transfer-matrix sandwich
 - [x] `CONVENTIONS.md` — tensor and index ordering documentation
 - [x] Validated against dense simulations
-- [ ] `InfiniteChain` geometry and iTEBD on infinite chains
-- [ ] Truncation schedule presets
-- [ ] Benchmark suite: ED vs DMRG, TEBD vs ED, DMRG/TEBD vs iTensor, iTEBD validation
+
+---
+
+## 🔲 v2.1 — TDVP
+
+Time-dependent variational principle for MPS time evolution.
+
+- [ ] Single-site TDVP (1TDVP) on finite chains
+- [ ] Two-site TDVP (2TDVP) with adaptive bond dimension
+- [ ] Krylov / Lanczos exponential integrator for the local update step
+- [ ] Validated against TEBD for short times and DMRG for ground states
 
 ---
 

@@ -43,15 +43,17 @@ This project serves as both a learning vehicle and a research platform, built wi
 - Two-site effective Hamiltonians with correct gauge fixing per sweep direction
 - Converges on TFIM, Heisenberg, random Z/X fields, and ZZ+Z — results match iTensor
 
-### ⏱️ TEBD Time Evolution _(new in v2)_
+### ⏱️ TEBD Time Evolution _(v2)_
 - `apply_two_site_gate` — in-place SVD-based two-site gate application with optional truncation
 - `two_site_gate_from_hamiltonian` / `two_site_gate_imaginary` — exact-diagonalisation gate builders
 - `finite_tebd` — first-order Trotter real-time evolution
 - `finite_tebd_strang` — second-order (Strang) Trotter splitting
-- `finite_tebd_imaginary` — ground-state preparation via imaginary-time evolution
-- `measure_local` — single-site expectation values via transfer matrix sweep
+- `finite_tebd_imaginary` — imaginary-time evolution with optional in-loop energy callback
+- `ground_state_search` — high-level ground-state search: runs imaginary-time TEBD to convergence, returns energy history and converged MPS
+- `measure_local` — single-site expectation values via transfer-matrix sweep
+- `measure_bond_energies` — two-site bond energy expectations
 
-### 🔀 Entangled State Helpers _(new in v2)_
+### 🔀 Entangled State Helpers _(v2)_
 - Bell states (all four), GHZ states, W states — both statevector and MPS form
 
 ### 🧪 Test Suite
@@ -78,6 +80,37 @@ pip install -e ".[dev]"
 ---
 
 ## Quickstart
+
+### Ground State Search with Imaginary-Time TEBD
+
+```python
+import numpy as np
+from tensor_network_library.core.mps import MPS
+from tensor_network_library.algorithms.tebd import ground_state_search
+
+L, J = 10, 1.0
+d = 2
+
+# Two-site Heisenberg Hamiltonian h_{i,i+1} = J/4 (XX + YY + ZZ)
+X = np.array([[0, 1], [1, 0]], dtype=np.complex128)
+Y = np.array([[0, -1j], [1j, 0]], dtype=np.complex128)
+Z = np.array([[1, 0], [0, -1]], dtype=np.complex128)
+H_local = J / 4.0 * (np.kron(X, X) + np.kron(Y, Y) + np.kron(Z, Z))
+
+# Random initial MPS
+rng = np.random.default_rng(42)
+psi0 = rng.standard_normal(d**L) + 1j * rng.standard_normal(d**L)
+mps0 = MPS.from_statevector(psi0 / np.linalg.norm(psi0), physical_dims=d)
+
+result = ground_state_search(
+    mps0, H_local,
+    dtau=0.05, max_steps=300, chi_max=32, energy_tol=1e-8,
+    verbose=True,
+)
+
+print(f"Converged: {result.converged} after {result.n_steps} steps")
+print(f"Ground-state energy: {result.energy_history[-1]:.10f}")
+```
 
 ### Ground State of TFIM with DMRG
 
@@ -114,20 +147,17 @@ from tensor_network_library.algorithms.tebd import (
     finite_tebd,
     measure_local,
 )
-from tensor_network_library.hamiltonian.models import heisenberg_mpo
 
 L = 10
 dt = 0.05
 n_steps = 40
 
-# Two-site Heisenberg Hamiltonian (J/4 * (XX + YY + ZZ))
 J = 1.0
 X = np.array([[0, 1], [1, 0]], dtype=np.complex128)
 Y = np.array([[0, -1j], [1j, 0]], dtype=np.complex128)
 Z = np.array([[1, 0], [0, -1]], dtype=np.complex128)
 H_local = J / 4.0 * (np.kron(X, X) + np.kron(Y, Y) + np.kron(Z, Z))
 
-# Neel initial state |↑↓↑↓...>
 labels = ["up" if i % 2 == 0 else "down" for i in range(L)]
 mps0 = MPS.from_qubit_labels(labels)
 
@@ -135,7 +165,6 @@ G = two_site_gate_from_hamiltonian(H_local, dt)
 config = TEBDConfig(n_steps=n_steps, normalize=True)
 mps_t = finite_tebd(mps0, G, G, config=config)
 
-# Measure <Sz> at each site
 Sz = 0.5 * Z
 sz_profile = measure_local(mps_t, Sz)
 print(f"<Sz> profile at t={n_steps * dt:.2f}: {sz_profile.round(4)}")
@@ -160,7 +189,8 @@ The CI badge above reflects the current state of the `main` branch.
 | Version | Focus | Status |
 |---------|-------|--------|
 | v1 | Finite-size DMRG — qubit and spin-1/2 chains | ✅ Done |
-| v2 | TEBD / iTEBD — real- and imaginary-time evolution | 🔲 In progress |
+| v2 | TEBD — real- and imaginary-time evolution, ground-state search | ✅ Done |
+| v2.1 | TDVP — time-dependent variational principle | 🔲 Next |
 
 See [`ROADMAP.md`](./ROADMAP.md) for detailed per-version task lists and [`DIARY.md`](./DIARY.md) for development notes.
 

@@ -9,11 +9,33 @@ This project adheres to [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 
 _Changes that are merged to `main` but not yet tagged._
 
-- iTEBD on infinite chains (`InfiniteChain` geometry + `itebd.py`)
-- Second-order (Strang) Trotter splitting for finite TEBD
-- Truncation schedule presets
-- Benchmark suite: ED vs DMRG, TEBD vs ED, DMRG/TEBD vs iTensor, iTEBD validation
-- `CONVENTIONS.md` — tensor and index ordering documentation
+---
+
+## [2.0.0] — 2026-06-06
+
+### Added
+- **`ground_state_search`** (`tebd.py`): high-level imaginary-time TEBD ground-state search.
+  Runs a first-order Trotter loop of `exp(-Δτ H)` steps, renormalises after every step, and
+  stops when `|E_n − E_{n−1}| < energy_tol`. Returns a `GroundStateResult` with the
+  converged MPS, full energy history, norm history, convergence flag, and step count.
+- **`GroundStateResult`** dataclass: structured return type for `ground_state_search`.
+- **`_left_canonicalize_inplace`** (internal helper): left-to-right QR sweep bringing any
+  MPS into left-canonical form in O(L χ² d). Used before every energy measurement in
+  `ground_state_search` to ensure Im(⟨H⟩) ≈ 0 regardless of the TEBD gauge.
+- **`CONVENTIONS.md`** — tensor and index ordering documentation.
+- **Second-order (Strang) Trotter splitting** (`finite_tebd_strang`).
+
+### Fixed
+- **Spurious imaginary energy warning in `ground_state_search`**: after a TEBD sweep the MPS
+  is in a mixed gauge (S absorbed into the right tensor of the last updated bond). Calling
+  `measure_bond_energies` on this state produces non-identity transfer matrices, causing
+  Im(⟨H⟩) up to ~0.35 early in the evolution and firing the `> 1e-10` guard ~40 times per
+  test run. Fix: `ground_state_search` now QR-sweeps a *copy* of the MPS to left-canonical
+  form before every energy measurement; Im(⟨H⟩) drops to machine precision (~1e-14).
+
+### Changed
+- `finite_tebd_imaginary` now accepts an optional `measure_fn: (MPS) -> float` callback for
+  in-loop energy tracking, populating `TEBDResult.energy_history`.
 
 ---
 
