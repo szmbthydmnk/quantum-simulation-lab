@@ -98,6 +98,35 @@ class TEBDResult:
     energy_history: List[float] = field(default_factory=list)
 
 
+@dataclass
+class GroundStateResult:
+    """
+    Return object for :func:`ground_state_search`.
+
+    Attributes
+    ----------
+    mps:
+        Ground-state MPS estimate after convergence or ``max_steps``.
+    energy_history:
+        Per-step energy estimate ``<ψ|H|ψ>`` evaluated after each
+        normalised imaginary-time step.
+    norm_history:
+        Raw MPS norm before normalisation at each step (tracks the
+        exponential decay curve of imaginary-time evolution).
+    converged:
+        True if ``|E_n - E_{n-1}| < energy_tol`` was satisfied before
+        ``max_steps`` was reached.
+    n_steps:
+        Number of imaginary-time steps actually performed.
+    """
+
+    mps: MPS
+    energy_history: List[float]
+    norm_history: List[float]
+    converged: bool
+    n_steps: int
+    
+
 # ---------------------------------------------------------------------------
 # Gate construction
 # ---------------------------------------------------------------------------
@@ -614,6 +643,272 @@ def finite_tebd_imaginary(
     )
 
 
+def measure_bond_energies(
+    mps: MPS,
+    h_bonds: Union[np.ndarray, Sequence[np.ndarray]],
+) -> np.ndarray:
+    """
+    Compute two-site bond energy expectations <ψ|h_{i,i+1}|ψ> for all bonds.
+
+    Parameters
+    ----------
+    mps:
+        The MPS |ψ⟩.  Need not be normalised; result is divided by <ψ|ψ>.
+    h_bonds:
+        Local two-site Hamiltonian(s) of shape ``(d^2, d^2)``.
+        Either a single uniform array or a sequence of ``L-1`` arrays.
+
+    Returns
+    -------
+    energies : np.ndarray, shape (L-1,)
+        Real part of <h_{i,i+1}> for each bond i.
+    """
+    L = len(mps)
+    if L < 2:
+        raise ValueError("measure_bond_energies requires L >= 2")
+
+    phys_dims = mps.physical_dims
+    if len(set(phys_dims)) != 1:
+        raise ValueError(
+            "measure_bond_energies currently assumes uniform physical dimension, "
+            f"got {phys_dims}"
+        )
+    d = phys_dims[0]
+
+    if isinstance(h_bonds, np.ndarray) and h_bonds.ndim == 2:
+        h_list: List[np.ndarray] = [np.asarray(h_bonds, dtype=mps.dtype)] * (L - 1)
+    else:
+        h_list = [np.asarray(h, dtype=mps.dtype) for h in h_bonds]
+        if len(h_list) != L - 1:
+            raise ValueError(
+                f"h_bonds sequence must have length L-1={L-1}, got {len(h_list)}"
+            )
+
+    for i, h in enumerate(h_list):
+        if h.shape != (d * d, d * d):
+            raise ValueError(
+                f"h_bonds[{i}] must have shape ({d*d},{d*d}), got {h.shape}"
+            )
+
+    tensors = [mps.tensors[i].data for i in range(L)]
+    for i, t in enumerate(tensors):
+        if t is None:
+            raise ValueError(f"MPS tensor at site {i} is not materialized.")
+
+    # Norm squared via full transfer matrix sweep
+    env = np.eye(tensors[0].shape[0], dtype=np.complex128)
+    for A in tensors:
+        env = np.einsum("ab,asc,bsd->cd", env, A, A.conj())
+    norm_sq = float(np.real(np.trace(env)))
+
+    # Left environments: left_envs[i] has shape (chi_i, chi_i)
+    left_envs: List[np.ndarray] = []
+    env = np.eye(tensors[0].shape[0], dtype=np.complex128)
+    for A in tensors:
+        left_envs.append(env.copy())
+        env = np.einsum("ab,asc,bsd->cd", env, A, A.conj())
+
+    # Right environments: right_envs[i] has shape (chi_{i+1}, chi_{i+1})
+    right_envs: List[np.ndarray] = [None] * L  # type: ignore[list-item]
+    env_r = np.eye(tensors[-1].shape[2], dtype=np.complex128)
+    right_envs[L - 1] = env_r.copy()
+    for i in range(L - 2, -1, -1):
+        A = tensors[i + 1]
+        env_r = np.einsum("asc,cd,bsd->ab", A, env_r, A.conj())
+        right_envs[i] = env_r.copy()
+
+    # Two-site sandwich: <ψ|h_{i,i+1}|ψ> =
+    #   L[a,b] A_i[a,s,c] A_{i+1}[c,t,e] h[s't',st] A_i*[b,s',d] A_{i+1}*[d,t',f] R[e,f]
+    energies = np.zeros(L - 1, dtype=complex)
+    for i in range(L - 1):
+        Ai  = tensors[i]          # (chiL, d, chiM)
+        Aj  = tensors[i + 1]      # (chiM, d, chiR)
+        L_e = left_envs[i]        # (chiL, chiL)
+        R_e = right_envs[i + 1]   # (chiR, chiR)
+        h   = h_list[i].reshape(d, d, d, d)  # (s', t', s, t)
+
+        val = np.einsum(
+            "ab,asc,ctf,mnst,bmd,dnf,ef->",
+            L_e, Ai, Aj, h, Ai.conj(), Aj.conj(), R_e,
+        )
+        energies[i] = val
+
+    energies /= norm_sq
+
+    imag_max = float(np.max(np.abs(energies.imag)))
+    if imag_max > 1e-10:
+        import warnings
+        warnings.warn(
+            f"measure_bond_energies: largest imaginary part = {imag_max:.3e}; "
+            "Hamiltonian may not be Hermitian or MPS has numerical noise.",
+            stacklevel=2,
+        )
+
+    return energies.real
+
+
+def ground_state_search(
+    mps0: MPS,
+    h_bonds: Union[np.ndarray, Sequence[np.ndarray]],
+    *,
+    dtau: float = 0.05,
+    max_steps: int = 500,
+    chi_max: int = 32,
+    svd_cutoff: float = 1e-12,
+    energy_tol: float = 1e-8,
+    verbose: bool = False,
+) -> GroundStateResult:
+    """
+    Ground-state search via imaginary-time TEBD.
+
+    Applies repeated first-order Trotter steps of
+
+        |ψ_{n+1}⟩ ∝ exp(-Δτ H) |ψ_n⟩
+
+    renormalising after every step, until the per-step energy change
+    ``|E_n - E_{n-1}|`` falls below ``energy_tol`` or ``max_steps``
+    is exhausted.
+
+    The energy at step n is estimated as
+
+        E_n = Σ_i <ψ_n | h_{i,i+1} | ψ_n>
+
+    using a two-site sandwich via :func:`measure_bond_energies`.
+
+    Parameters
+    ----------
+    mps0:
+        Initial MPS (not modified; a copy is evolved).  A random MPS
+        (:meth:`MPS.from_random`) with sufficient bond dimension works
+        well.  The MPS is normalised internally before the first step.
+    h_bonds:
+        Local two-site Hamiltonian(s) of shape ``(d^2, d^2)``.
+        Either a single array (uniform coupling, same for every bond)
+        or a sequence of ``L-1`` arrays for inhomogeneous systems.
+    dtau:
+        Imaginary time step Δτ.  Smaller values give better Trotter
+        accuracy at the cost of more steps.  Typical range: 0.01–0.1.
+    max_steps:
+        Hard upper bound on the number of imaginary-time steps.
+    chi_max:
+        Maximum bond dimension kept after each SVD truncation.
+    svd_cutoff:
+        Singular values whose *square* is below this threshold are
+        discarded (passed to :class:`TruncationPolicy`).
+    energy_tol:
+        Convergence criterion: stop when
+        ``|E_n - E_{n-1}| < energy_tol``.
+    verbose:
+        If True, print step diagnostics.
+
+    Returns
+    -------
+    GroundStateResult
+        See :class:`GroundStateResult` for field descriptions.
+
+    Notes
+    -----
+    * The Trotter splitting is first-order (even bonds then odd bonds).
+      For high accuracy, reduce ``dtau`` and increase ``max_steps``,
+      or switch to a Strang-split schedule externally.
+    * Bond dimension grows from the initial MPS up to ``chi_max``.
+      Initialising with a small random MPS and a generous ``chi_max``
+      is the standard approach.
+    * Energy convergence does **not** imply that the Trotter error
+      is negligible; always verify by decreasing ``dtau``.
+    """
+    if dtau <= 0.0:
+        raise ValueError(f"dtau must be positive, got {dtau}")
+    if max_steps <= 0:
+        raise ValueError(f"max_steps must be positive, got {max_steps}")
+    if chi_max <= 0:
+        raise ValueError(f"chi_max must be positive, got {chi_max}")
+    if energy_tol <= 0.0:
+        raise ValueError(f"energy_tol must be positive, got {energy_tol}")
+
+    L = len(mps0)
+    if L < 2:
+        raise ValueError("ground_state_search requires L >= 2")
+
+    phys_dims = mps0.physical_dims
+    if len(set(phys_dims)) != 1:
+        raise ValueError(
+            "ground_state_search currently assumes uniform physical dimension, "
+            f"got {phys_dims}"
+        )
+    d = phys_dims[0]
+
+    # --- Build imaginary-time gates ---
+    # Uniform h_bonds: broadcast; per-bond: validate length
+    if isinstance(h_bonds, np.ndarray) and h_bonds.ndim == 2:
+        h_list: List[np.ndarray] = [np.asarray(h_bonds, dtype=np.complex128)] * (L - 1)
+    else:
+        h_list = [np.asarray(h, dtype=np.complex128) for h in h_bonds]
+        if len(h_list) != L - 1:
+            raise ValueError(
+                f"h_bonds sequence must have length L-1={L-1}, got {len(h_list)}"
+            )
+
+    gates = [two_site_gate_imaginary(h, dtau) for h in h_list]
+    gates_even = [gates[i] for i in range(0, L - 1, 2)]
+    gates_odd  = [gates[i] for i in range(1, L - 1, 2)]
+
+    truncation = TruncationPolicy(max_bond_dim=chi_max, cutoff=svd_cutoff)
+
+    # --- Energy measurement function ---
+    def _energy(mps: MPS) -> float:
+        return float(np.sum(measure_bond_energies(mps, h_list)))
+
+    # --- Evolve ---
+    mps = mps0.copy()
+    mps.normalize()
+
+    norm_history: List[float] = []
+    energy_history: List[float] = []
+    converged = False
+
+    layer_even = _prepare_layer_gates(gates_even, L=L, offset=0, d=d)
+    layer_odd  = _prepare_layer_gates(gates_odd,  L=L, offset=1, d=d)
+
+    for step in range(max_steps):
+        for bond, G in layer_even:
+            apply_two_site_gate(mps, G, bond=bond, truncation=truncation)
+        for bond, G in layer_odd:
+            apply_two_site_gate(mps, G, bond=bond, truncation=truncation)
+
+        nrm = mps.norm()
+        norm_history.append(float(nrm))
+        mps.normalize()
+
+        energy = _energy(mps)
+        energy_history.append(energy)
+
+        if verbose:
+            print(
+                f"[ground_state_search] step {step+1}/{max_steps}  "
+                f"norm={nrm:.10f}  E={energy:.12f}"
+            )
+
+        # Convergence check: need at least two energy measurements
+        if len(energy_history) >= 2:
+            if abs(energy_history[-1] - energy_history[-2]) < energy_tol:
+                converged = True
+                if verbose:
+                    print(
+                        f"[ground_state_search] converged at step {step+1}  "
+                        f"ΔE={abs(energy_history[-1]-energy_history[-2]):.3e}"
+                    )
+                break
+
+    return GroundStateResult(
+        mps=mps,
+        energy_history=energy_history,
+        norm_history=norm_history,
+        converged=converged,
+        n_steps=len(energy_history),
+    )
+    
+    
 # ---------------------------------------------------------------------------
 # Observable measurement
 # ---------------------------------------------------------------------------
