@@ -1,4 +1,3 @@
-# tensor_network_library/algorithms/tebd.py
 """
 Finite-size nearest-neighbour TEBD (real- and imaginary-time evolution).
 
@@ -239,6 +238,45 @@ def _prepare_layer_gates(
             )
         prepared.append((i, G_arr))
     return prepared
+
+
+def _left_canonicalize_inplace(mps: MPS) -> None:
+    """
+    Bring an MPS into left-canonical form via a left-to-right QR sweep.
+
+    Each site tensor A[i] of shape (chiL, d, chiR) is reshaped to
+    (chiL*d, chiR), QR-decomposed, and the R factor is absorbed into
+    A[i+1].  The final site is left as-is (it carries the norm).
+
+    This is O(L chi^2 d) and is used to ensure Im(<H>) ≈ 0 when calling
+    measure_bond_energies on a mixed-gauge MPS after a TEBD sweep.
+    """
+    L = len(mps)
+    for i in range(L - 1):
+        A = mps.tensors[i].data
+        chiL, d, chiR = A.shape
+        # Reshape and QR
+        M = A.reshape(chiL * d, chiR)
+        Q, R = np.linalg.qr(M)
+        chi_new = Q.shape[1]
+        A_new = Q.reshape(chiL, d, chi_new)
+        # Absorb R into next site
+        B = mps.tensors[i + 1].data
+        chiM, d_next, chiR_next = B.shape
+        B_new = np.tensordot(R, B, axes=([1], [0]))  # (chi_new, d_next, chiR_next)
+        # Update bond index
+        old_bond = mps.bonds[i + 1]
+        new_bond = Index(dim=chi_new, name=old_bond.name, tags=old_bond.tags)
+        mps.tensors[i] = Tensor(
+            A_new.astype(mps.dtype, copy=False),
+            indices=[mps.bonds[i], mps.indices[i], new_bond],
+        )
+        mps.tensors[i + 1] = Tensor(
+            B_new.astype(mps.dtype, copy=False),
+            indices=[new_bond, mps.indices[i + 1], mps.bonds[i + 2]],
+        )
+        mps.bonds[i + 1] = new_bond
+        mps._bond_dims[i + 1] = chi_new
 
 
 # ---------------------------------------------------------------------------
@@ -773,7 +811,8 @@ def ground_state_search(
 
         E_n = Σ_i <ψ_n | h_{i,i+1} | ψ_n>
 
-    using a two-site sandwich via :func:`measure_bond_energies`.
+    using a two-site sandwich via :func:`measure_bond_energies` on a
+    left-canonical copy of the MPS (ensuring Im(E) ≈ 0).
 
     Parameters
     ----------
@@ -816,6 +855,9 @@ def ground_state_search(
       is the standard approach.
     * Energy convergence does **not** imply that the Trotter error
       is negligible; always verify by decreasing ``dtau``.
+    * Energy is measured on a left-canonical copy of the MPS so that
+      Im(<H>) is at machine precision; the evolved MPS itself is not
+      modified by the measurement.
     """
     if dtau <= 0.0:
         raise ValueError(f"dtau must be positive, got {dtau}")
@@ -855,9 +897,16 @@ def ground_state_search(
 
     truncation = TruncationPolicy(max_bond_dim=chi_max, cutoff=svd_cutoff)
 
-    # --- Energy measurement function ---
+    # --- Energy measurement on a left-canonical copy ---
+    # After a TEBD sweep the MPS is in a mixed gauge (S absorbed into the
+    # right tensor of the last updated bond).  Calling measure_bond_energies
+    # directly on this state produces non-identity transfer matrices and a
+    # large Im(<H>).  We instead QR-sweep a *copy* to left-canonical form
+    # before every measurement; the evolved MPS itself is untouched.
     def _energy(mps: MPS) -> float:
-        return float(np.sum(measure_bond_energies(mps, h_list)))
+        mps_lc = mps.copy()
+        _left_canonicalize_inplace(mps_lc)
+        return float(np.sum(measure_bond_energies(mps_lc, h_list)))
 
     # --- Evolve ---
     mps = mps0.copy()
