@@ -32,6 +32,8 @@ import numpy as np
 
 from tensor_network_library.core.mps import MPS
 from tensor_network_library.core.policy import TruncationPolicy
+from tensor_network_library.core.tensor import Tensor
+from tensor_network_library.core.index import Index
 
 ArrayLike = Union[np.ndarray, Sequence[float], Sequence[complex]]
 
@@ -289,8 +291,31 @@ def apply_two_site_gate(
     A_new = Umat.reshape(chiL, d, chi_keep)
     B_new = (S[:, None] * Vh).reshape(chi_keep, d, chiR)
 
-    mps.tensors[bond].data = A_new.astype(mps.dtype, copy=False)
-    mps.tensors[bond + 1].data = B_new.astype(mps.dtype, copy=False)
+    # Build a fresh shared bond Index with the updated dimension.
+    # Reusing the old Index (dim may have changed) would leave stale
+    # dim metadata on the Tensor objects and break norm() / conj().
+    old_bond = mps.bonds[bond + 1]
+    new_bond = Index(
+        dim=chi_keep,
+        name=old_bond.name,
+        tags=old_bond.tags,
+    )
+
+    # Replace both site tensors with fresh Tensor objects that carry the
+    # correct indices — do NOT mutate .data in-place, as that leaves the
+    # existing Index objects with wrong dims.
+    mps.tensors[bond] = Tensor(
+        A_new.astype(mps.dtype, copy=False),
+        indices=[mps.bonds[bond], mps.indices[bond], new_bond],
+    )
+    mps.tensors[bond + 1] = Tensor(
+        B_new.astype(mps.dtype, copy=False),
+        indices=[new_bond, mps.indices[bond + 1], mps.bonds[bond + 2]],
+    )
+
+    # Keep the MPS bookkeeping consistent.
+    mps.bonds[bond + 1] = new_bond
+    mps._bond_dims[bond + 1] = chi_keep
 
 
 # ---------------------------------------------------------------------------
@@ -665,7 +690,7 @@ def measure_local(
     # ------------------------------------------------------------------
     # Pass 2: accumulate right environments R_env[i] = transfer matrix
     #         of sites i+1..L-1.  Shape (chiR_i, chiR_i).
-    # R_env[L-1] = identity (nothing to the right of the last site).
+    # R_env[L-1] = identity (nothing to the right of the last site)
     # ------------------------------------------------------------------
     right_envs: List[np.ndarray] = [None] * L   # type: ignore[list-item]
     env_r = np.eye(tensors[-1].shape[2], dtype=mps.dtype)
