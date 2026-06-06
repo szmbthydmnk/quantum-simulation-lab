@@ -1,263 +1,252 @@
-"""Entangled multi-qubit reference states."""
-
 from __future__ import annotations
 
+from typing import Tuple
 import numpy as np
-from typing import Tuple, Union
+
+from tensor_network_library.core.mps import MPS
 
 
-# ------------------------------------------------------------------
-# Helpers
-# ------------------------------------------------------------------
-
-def _norm(v: np.ndarray) -> np.ndarray:
-    """Return normalised copy of a 1-D complex vector."""
-    v = np.asarray(v, dtype=np.complex128).reshape(-1)
-    n = np.linalg.norm(v)
-    if n == 0:
-        raise ValueError("Zero vector cannot be normalised.")
-    return v / n
-
-
-# ------------------------------------------------------------------
-# Bell states (2 qubits) — legacy simple API
-# ------------------------------------------------------------------
-
-def bell_state(label: str = "phi+") -> np.ndarray:
+def _basis_index(bits: np.ndarray) -> int:
     """
-    Return one of the four Bell states as a 4-element complex vector.
+    Map a {0,1}^L bitstring to the corresponding computational-basis index.
 
-    Labels (case-insensitive, spaces/underscores ignored):
-      "phi+"  |Phi+> = (|00> + |11>) / sqrt(2)   [default]
-      "phi-"  |Phi-> = (|00> - |11>) / sqrt(2)
-      "psi+"  |Psi+> = (|01> + |10>) / sqrt(2)
-      "psi-"  |Psi-> = (|01> - |10>) / sqrt(2)
+    bits[0] is the most significant qubit (leftmost).
     """
-    key = label.strip().lower().replace(" ", "").replace("_", "")
+    bits = np.asarray(bits, dtype=int).reshape(-1)
+    idx = 0
+    for b in bits:
+        if b not in (0, 1):
+            raise ValueError(f"Bits must be 0 or 1, got {b!r}")
+        idx = (idx << 1) | int(b)
+    return idx
 
-    sqrt2 = np.sqrt(2.0)
-    states = {
-        "phi+": np.array([1, 0, 0, 1], dtype=np.complex128) / sqrt2,
-        "phi-": np.array([1, 0, 0, -1], dtype=np.complex128) / sqrt2,
-        "psi+": np.array([0, 1, 1, 0], dtype=np.complex128) / sqrt2,
-        "psi-": np.array([0, 1, -1, 0], dtype=np.complex128) / sqrt2,
-    }
-    if key not in states:
+
+def _validate_chain(L: int, physical_dims: int) -> None:
+    if L <= 0:
+        raise ValueError("L must be a positive integer.")
+    if physical_dims != 2:
+        # We can support general d later; for TEBD v2 we only need qubits.
         raise ValueError(
-            f"Unknown Bell state label {label!r}. "
-            f"Choose from: {list(states.keys())}"
+            "Entangled state helpers currently support qubits only (physical_dims=2)."
         )
-    return states[key].copy()
 
 
-def all_bell_states() -> dict[str, np.ndarray]:
-    """Return all four Bell states in a dict."""
-    return {lbl: bell_state(lbl) for lbl in ("phi+", "phi-", "psi+", "psi-")}
-
-
-# ------------------------------------------------------------------
-# Bell statevector — embedded into an L-qubit chain
-# ------------------------------------------------------------------
-
-def bell_statevector(
+def w_statevector(
     L: int,
-    which: str = "phi+",
-    pair: Tuple[int, int] = (0, 1),
+    *,
+    dtype: np.dtype = np.complex128,
 ) -> np.ndarray:
-    """
-    Return a Bell state embedded in an L-qubit chain as a dense statevector
-    of length 2**L.  All qubits outside ``pair`` are in |0>.
+    r"""
+    Dense statevector for the L-qubit W state
 
-    Parameters
-    ----------
-    L     : Total number of qubits.
-    which : One of "phi+", "phi-", "psi+", "psi-".
-    pair  : (i, j) with i < j < L — the two qubits that are entangled.
+        |W_L⟩ = (1/√L) Σ_{k=0}^{L-1} |0…010…0⟩_k,
+
+    i.e., equal superposition of all computational basis states with
+    a single excitation.
+    """
+    _validate_chain(L=L, physical_dims=2)
+
+    dim = 2**L
+    psi = np.zeros(dim, dtype=dtype)
+
+    if L == 0:
+        raise ValueError("Cannot build W-state with L = 0.")
+
+    amp = 1.0 / np.sqrt(float(L))
+
+    bits = np.zeros(L, dtype=int)
+    for k in range(L):
+        bits.fill(0)
+        bits[k] = 1
+        idx = _basis_index(bits)
+        psi[idx] = amp
+
+    return psi.astype(dtype, copy=False)
+
+
+def ghz_statevector(L: int,
+                    *,
+                    dtype: np.dtype = np.complex128,
+                    ) -> np.ndarray:
+    """
+    Dense statevector for the L-qubit GHZ state
+
+        |GHZ_L⟩ = (|0…0⟩ + |1…1⟩) / √2.
+    """
+    
+    _validate_chain(L=L, physical_dims=2)
+
+    dim = 2**L
+    psi = np.zeros(dim, dtype=dtype)
+
+    amp = 1.0 / np.sqrt(2.0)
+
+    bits_zero = np.zeros(L, dtype=int)
+    bits_one = np.ones(L, dtype=int)
+
+    k0 = _basis_index(bits_zero)
+    k1 = _basis_index(bits_one)
+
+    psi[k0] = amp
+    psi[k1] = amp
+
+    return psi.astype(dtype, copy=False)
+
+
+def bell_statevector(L: int = 2,
+                     which: str = "phi+",
+                     pair: Tuple[int, int] = (0, 1), *,
+                     dtype: np.dtype = np.complex128,
+                     ) -> np.ndarray:
+    """
+    Dense statevector for a Bell pair embedded in an L-qubit chain.
+
+    The Bell pair lives on sites `pair = (i, j)`; all other qubits are |0⟩.
+    Sites are 0-based, with site 0 the leftmost qubit.
+
+    Supported `which` labels (case-insensitive):
+
+        "phi+" : (|00⟩ + |11⟩) / √2
+        "phi-" : (|00⟩ - |11⟩) / √2
+        "psi+" : (|01⟩ + |10⟩) / √2
+        "psi-" : (|01⟩ - |10⟩) / √2
+
+    When embedded into an L-site chain, these act on qubits i and j,
+    with all other qubits frozen in |0⟩.
 
     Returns
     -------
-    np.ndarray of shape (2**L,), dtype complex128, normalised.
+    psi : np.ndarray, shape (2**L,)
+        Normalized statevector.
     """
-    if L < 2:
-        raise ValueError("L must be >= 2.")
-    i, j = int(pair[0]), int(pair[1])
-    if not (0 <= i < j < L):
-        raise ValueError(f"pair must satisfy 0 <= i < j < L, got pair={pair}, L={L}.")
+    
+    _validate_chain(L = L, physical_dims = 2)
 
-    bell_2q = bell_state(which)  # shape (4,)
+    i, j = pair
+    i = int(i)
+    j = int(j)
 
-    dim = 2 ** L
-    psi = np.zeros(dim, dtype=np.complex128)
+    if not (0 <= i < L and 0 <= j < L):
+        raise ValueError(f"pair={pair!r} must have 0 <= i < j < L, got L={L}")
+    if i == j:
+        raise ValueError("Bell pair sites must be distinct.")
+    if i > j:
+        i, j = j, i
 
-    # Iterate over the 4 two-qubit basis states |s_i, s_j>
-    for two_idx in range(4):
-        si = (two_idx >> 1) & 1   # bit 1 -> qubit i
-        sj = (two_idx >> 0) & 1   # bit 0 -> qubit j
-        amp = bell_2q[two_idx]
-        if amp == 0:
-            continue
-        # Build the full L-qubit basis index with si at position i, sj at j, 0 elsewhere
-        full_idx = (si << i) | (sj << j)
-        psi[full_idx] += amp
+    which_key = which.strip().lower()
+    if which_key not in {"phi+", "phi-", "psi+", "psi-"}:
+        raise ValueError(
+            f"Unsupported Bell label {which!r}; "
+            "expected one of 'phi+', 'phi-', 'psi+', 'psi-'."
+        )
 
-    return psi
+    dim = 2**L
+    psi = np.zeros(dim, dtype=dtype)
 
+    bits = np.zeros(L, dtype=int)
 
-# ------------------------------------------------------------------
-# GHZ states
-# ------------------------------------------------------------------
+    amp = 1.0 / np.sqrt(2.0)
 
-def ghz_state(n: int) -> np.ndarray:
+    if which_key.startswith("phi"):
+        # |00> ± |11> on (i,j)
+        # configuration 1: all zeros
+        bits.fill(0)
+        k1 = _basis_index(bits)
+        # configuration 2: ones on i and j
+        bits.fill(0)
+        bits[i] = 1
+        bits[j] = 1
+        k2 = _basis_index(bits)
+
+        if which_key == "phi+":
+            psi[k1] = amp
+            psi[k2] = amp
+        else:  # "phi-"
+            psi[k1] = amp
+            psi[k2] = -amp
+
+    else:
+        # psi±: |01> ± |10> on (i,j)
+        bits.fill(0)
+        bits[i] = 0
+        bits[j] = 1
+        k1 = _basis_index(bits)
+
+        bits.fill(0)
+        bits[i] = 1
+        bits[j] = 0
+        k2 = _basis_index(bits)
+
+        if which_key == "psi+":
+            psi[k1] = amp
+            psi[k2] = amp
+        else:  # "psi-"
+            psi[k1] = amp
+            psi[k2] = -amp
+
+    return psi.astype(dtype, copy=False)
+
+def bell_mps(L: int = 2,
+             which: str = "phi+",
+             pair: Tuple[int, int] = (0, 1), *,
+             name: str = "Bell",
+             dtype: np.dtype = np.complex128,
+             ) -> MPS:
     """
-    Return the n-qubit GHZ state (|0...0> + |1...1>) / sqrt(2) as a
-    1-D complex vector of length 2**n.
+    Convenience wrapper: build an MPS for a Bell pair embedded in an L-qubit chain.
+    
+    See 'bell_statevector' for semantics.
     """
-    if n < 2:
-        raise ValueError("GHZ state requires n >= 2.")
-    dim = 2 ** n
-    v = np.zeros(dim, dtype=np.complex128)
-    v[0] = 1.0 / np.sqrt(2.0)
-    v[dim - 1] = 1.0 / np.sqrt(2.0)
-    return v
-
-
-def ghz_statevector(L: int) -> np.ndarray:
+    
+    psi = bell_statevector(L = L, which = which, pair = pair, dtype=dtype)
+    
+    return MPS.from_statevector(psi,
+                                physical_dims=2,
+                                name = name,
+                                truncation = None,
+                                absorb = "right",
+                                normalize = True,
+                                dtype = dtype,
+                                )
+    
+    
+def ghz_mps(L: int,
+            *,
+            name: str = "GHZ",
+            dtype: np.dtype = np.complex128,
+            ) -> MPS:
     """
-    Alias for :func:`ghz_state` using the ``L`` keyword used by tests.
-
-    Returns
-    -------
-    np.ndarray of shape (2**L,), dtype complex128, normalised.
+    Convenience wrapper: build an MPS for the L-qubit GHZ state.
     """
-    return ghz_state(L)
+    
+    psi = ghz_statevector(L=L, dtype=dtype)
+    
+    return MPS.from_statevector(psi,
+                                physical_dims=2,
+                                name=name,
+                                truncation=None,
+                                absorb="right",
+                                normalize=True,
+                                dtype=dtype,
+                                )
 
 
-# ------------------------------------------------------------------
-# W states
-# ------------------------------------------------------------------
+def w_mps(L: int,
+          *,
+          name: str = "W",
+          dtype: np.dtype = np.complex128,) -> MPS:
 
-def w_state(n: int) -> np.ndarray:
     """
-    Return the n-qubit W state as a 1-D complex vector of length 2**n.
+    Convenience wrapper: build an MPS for the L-qubit W state.
     """
-    if n < 2:
-        raise ValueError("W state requires n >= 2.")
-    dim = 2 ** n
-    v = np.zeros(dim, dtype=np.complex128)
-    for k in range(n):
-        v[1 << k] = 1.0 / np.sqrt(float(n))
-    return v
-
-
-def w_statevector(L: int) -> np.ndarray:
-    """
-    Alias for :func:`w_state` using the ``L`` keyword used by tests.
-
-    Returns
-    -------
-    np.ndarray of shape (2**L,), dtype complex128, normalised.
-    """
-    return w_state(L)
-
-
-# ------------------------------------------------------------------
-# MPS wrappers
-# ------------------------------------------------------------------
-
-def bell_mps(
-    L: int,
-    which: str = "phi+",
-    pair: Tuple[int, int] = (0, 1),
-):
-    """
-    Return a Bell state embedded in an L-qubit chain as an MPS.
-
-    Built via :func:`bell_statevector` + ``MPS.from_statevector``.
-    The bond dimension is exact (no truncation).
-    """
-    from tensor_network_library.core.mps import MPS
-
-    psi = bell_statevector(L=L, which=which, pair=pair)
-    return MPS.from_statevector(psi, physical_dims=2, name=f"bell_{which}")
-
-
-def ghz_mps(L: int):
-    """
-    Return the L-qubit GHZ state as an MPS.
-
-    Built via :func:`ghz_statevector` + ``MPS.from_statevector``.
-    """
-    from tensor_network_library.core.mps import MPS
-
-    psi = ghz_statevector(L=L)
-    return MPS.from_statevector(psi, physical_dims=2, name="ghz")
-
-
-def w_mps(L: int):
-    """
-    Return the L-qubit W state as an MPS.
-
-    Built via :func:`w_statevector` + ``MPS.from_statevector``.
-    """
-    from tensor_network_library.core.mps import MPS
-
-    psi = w_statevector(L=L)
-    return MPS.from_statevector(psi, physical_dims=2, name="w")
-
-
-# ------------------------------------------------------------------
-# Cluster states
-# ------------------------------------------------------------------
-
-def cluster_state(
-    n: int,
-    periodic: bool = False,
-) -> np.ndarray:
-    """
-    Return a 1-D cluster state for n qubits as a dense statevector.
-
-    Algorithm
-    ---------
-    1. Start from |+>^n.
-    2. Apply CZ between all pairs (i, i+1). If periodic=True also apply (n-1, 0).
-    """
-    if n < 2:
-        raise ValueError("Cluster state requires n >= 2.")
-
-    dim = 2 ** n
-    psi = np.ones(dim, dtype=np.complex128) / np.sqrt(float(dim))
-
-    def _cz(state: np.ndarray, i: int, j: int, n_qubits: int) -> np.ndarray:
-        result = state.copy()
-        for idx in range(2 ** n_qubits):
-            si = (idx >> i) & 1
-            sj = (idx >> j) & 1
-            if si == 1 and sj == 1:
-                result[idx] *= -1
-        return result
-
-    for i in range(n - 1):
-        psi = _cz(psi, i, i + 1, n)
-    if periodic:
-        psi = _cz(psi, n - 1, 0, n)
-
-    return psi
-
-
-# ------------------------------------------------------------------
-# Dicke states
-# ------------------------------------------------------------------
-
-def dicke_state(n: int, k: int) -> np.ndarray:
-    """
-    Return the Dicke state |D^n_k>, the equal superposition of all
-    n-qubit basis states with exactly k ones.
-    """
-    if not (0 <= k <= n):
-        raise ValueError(f"k must satisfy 0 <= k <= n, got n={n}, k={k}.")
-    dim = 2 ** n
-    v = np.zeros(dim, dtype=np.complex128)
-    for idx in range(dim):
-        if bin(idx).count("1") == k:
-            v[idx] = 1.0
-    return _norm(v)
+    
+    psi = w_statevector(L=L, dtype=dtype)
+    
+    return MPS.from_statevector(psi,
+                                physical_dims=2,
+                                name=name,
+                                truncation=None,
+                                absorb="right",
+                                normalize=True,
+                                dtype=dtype,
+                                )

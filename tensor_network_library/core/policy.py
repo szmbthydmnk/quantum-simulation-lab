@@ -1,20 +1,3 @@
-"""
-Truncation policy for SVD-based bond-dimension control.
-
-Provides :class:`TruncationPolicy`, a lightweight dataclass that encapsulates
-the two standard truncation criteria used throughout tensor-network algorithms:
-
-* **Singular-value cutoff** – discard all singular values whose square is
-  below a threshold (equivalent to a Schmidt-rank cutoff on the reduced
-  density matrix).
-* **Maximum bond dimension** – hard cap on the number of singular values kept
-  regardless of their magnitude.
-
-Example::
-
-    policy = TruncationPolicy(max_bond_dim=64, cutoff=1e-10)
-    chi = policy.choose_bond_dim(singular_values)
-"""
 from dataclasses import dataclass, field
 from typing import Optional
 import numpy as np

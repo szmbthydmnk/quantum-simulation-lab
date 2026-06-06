@@ -186,7 +186,7 @@ def equator_state(phi: float) -> np.ndarray:
 
 def qubit_t_type_magic_states(k: int) -> np.ndarray:
     """
-    8 T-type states: Bloch vectors at cube vertices (+-1,+-1,+-1)/sqrt(3).
+    8 T-type states: Bloch vectors at cube vertices (±1,±1,±1)/sqrt(3). [web:281]
     """
     k = int(k)
     if not (0 <= k <= 7):
@@ -202,9 +202,9 @@ def qubit_t_type_magic_states(k: int) -> np.ndarray:
 
 def qubit_h_type_magic_states(k: int) -> np.ndarray:
     """
-    H-type family from permutations/signs of (1,1,0)/sqrt(2).
+    H-type family from permutations/signs of (1,1,0)/sqrt(2). [web:281]
     This yields 12 distinct Bloch directions:
-      (+-1,+-1,0), (+-1,0,+-1), (0,+-1,+-1) all /sqrt(2).
+      (±1,±1,0), (±1,0,±1), (0,±1,±1) all /sqrt(2).
     """
     vecs: list[np.ndarray] = []
     base_patterns = [

@@ -1,270 +1,351 @@
-"""Core Tensor class with Index-based contraction."""
+from __future__ import annotations  # Postpone evaluation of type hints
 
-from __future__ import annotations
-
-from typing import List, Tuple, Optional
+from typing import Tuple, Optional, List
 import numpy as np
+from numpy.typing import NDArray
+from scipy.linalg import svd, qr, eigh  # NOTE: eigh currently unused, keep or remove
 
-from .index import Index
 from .policy import TruncationPolicy
+from .index import Index
+
+ComplexArray = NDArray[np.complex128]
 
 
 class Tensor:
     """
-    A named, multi-dimensional array whose axes are labelled by Index objects.
+    A multi dimensional array wrapper with tensor network operations.
 
-    Parameters
-    ----------
-    data :
-        The underlying array, or ``None`` for a structure-only tensor.
-    indices :
-        Ordered list of :class:`Index` objects, one per axis.
-    name :
-        Human-readable label (optional).
+    Supports two modes:
+        - materialized: data is a NumPy array
+        - unmaterialized: data is None, but indices define shape/ndim
     """
 
     def __init__(
         self,
-        data: Optional[np.ndarray],
-        indices: List[Index],
-        name: str = "",
-    ) -> None:
-        self.data: Optional[np.ndarray] = (
-            np.asarray(data) if data is not None else None
-        )
-        self.indices: List[Index] = list(indices)
-        self.name: str = str(name)
+        data: ComplexArray | None,
+        indices: List[Index] | None = None,
+        physical_indices: Optional[List[str]] = None,
+        bond_indices: Optional[List[str]] = None,
+    ):
+        """
+        Initialize a tensor.
 
-        if self.data is not None:
-            self._check_shape()
+        Args:
+            data: NumPy array or None (unmaterialized).
+            indices: List[Index] (one per axis). Required if data is None.
+            physical_indices: Deprecated string metadata, kept for compatibility.
+            bond_indices: Deprecated string metadata, kept for compatibility.
+        """
+        self.data = None if data is None else np.asarray(data)
 
-    # ------------------------------------------------------------------
-    # Shape / structure
-    # ------------------------------------------------------------------
+        # keep old metadata for compatibility (deprecated, will remove after transition)
+        self.physical_indices = physical_indices or []
+        self.bond_indices = bond_indices or []
 
-    @property
-    def rank(self) -> int:
-        """Number of axes."""
-        return len(self.indices)
+        # ----------------------------
+        # Unmaterialized tensor path
+        # ----------------------------
+        if self.data is None:
+            if indices is None:
+                raise ValueError("Unmaterialized Tensor requires explicit indices.")
+            self.indices = list(indices)
+            return
+
+        # ----------------------------
+        # Materialized tensor path
+        # ----------------------------
+        if indices is None:
+            self.indices = [Index(dim=d, name=f"axis_{i}") for i, d in enumerate(self.data.shape)]
+        else:
+            assert len(indices) == self.data.ndim, f"Expected {self.data.ndim} indices, got {len(indices)}."
+            for ind, d in zip(indices, self.data.shape):
+                assert ind.dim == d, f"Index dim {ind.dim} doesn't match axis dim {d}."
+            self.indices = list(indices)
+
+    # ----------------------------
+    # Internal helpers
+    # ----------------------------
+
+    def _require_data(self) -> None:
+        if self.data is None:
+            raise ValueError("Tensor has data=None (unmaterialized). Materialize before numeric ops.")
+
+    def is_materialized(self) -> bool:
+        return self.data is not None
+
+    def materialize_zeros(self, dtype: np.dtype = np.complex128) -> "Tensor":
+        """
+        Materialize an unmaterialized tensor as an explicit dense zeros array.
+        """
+        if self.data is None:
+            self.data = np.zeros(self.shape, dtype=dtype)
+        return self
+
+    # ----------------------------
+    # Python / NumPy interoperability
+    # ----------------------------
+
+    def __len__(self) -> int:
+        self._require_data()
+        return len(self.data)
+
+    def __getitem__(self, key):
+        self._require_data()
+
+        out = self.data[key]
+        if np.isscalar(out) or getattr(out, "shape", ()) == ():
+            return out
+
+        # Safe default: slicing can change rank/shape, so create fresh indices.
+        new_inds = [Index(dim=d, name=f"axis_{i}") for i, d in enumerate(out.shape)]
+        return Tensor(out, indices=new_inds)
+
+    def __iter__(self):
+        self._require_data()
+        return iter(self.data)
+
+    def __array__(self, dtype=None):
+        self._require_data()
+        return np.asarray(self.data, dtype=dtype) if dtype is not None else np.asarray(self.data)
+
+    # ----------------------------
+    # Minimal arithmetic (add as-needed)
+    # ----------------------------
+
+    def __pow__(self, power, modulo=None) -> "Tensor":
+        self._require_data()
+        if modulo is not None:
+            return NotImplemented
+        return Tensor(np.power(self.data, power), indices=self.indices.copy())
+
+    def __ge__(self, other) -> "Tensor":
+        self._require_data()
+        other_arr = other.data if isinstance(other, Tensor) else other
+        return Tensor(self.data >= other_arr, indices=self.indices.copy())
+
+    def __mul__(self, scalar: complex) -> "Tensor":
+        self._require_data()
+        return Tensor(self.data * scalar, indices=self.indices.copy())
+
+    def __rmul__(self, scalar: complex) -> "Tensor":
+        return self.__mul__(scalar)
+
+    def __repr__(self) -> str:
+        inds_repr = ", ".join(str(i) for i in self.indices) if hasattr(self, "indices") else ""
+        return f"Tensor(shape={self.shape}, inds=[{inds_repr}])"
+
+    # ----------------------------
+    # Basic properties
+    # ----------------------------
 
     @property
     def shape(self) -> Tuple[int, ...]:
-        """Shape derived from Index objects."""
-        return tuple(ix.dim for ix in self.indices)
+        """Returns shape of the tensor."""
+        if self.data is not None:
+            return self.data.shape
+        return tuple(ind.dim for ind in self.indices)
 
     @property
     def ndim(self) -> int:
+        """Return number of dimensions."""
+        if self.data is not None:
+            return self.data.ndim
         return len(self.indices)
 
-    # ------------------------------------------------------------------
-    # Checks
-    # ------------------------------------------------------------------
+    # ----------------------------
+    # Basic tensor ops
+    # ----------------------------
 
-    def _check_shape(self) -> None:
-        if self.data is None:
-            return
-        expected = tuple(ix.dim for ix in self.indices)
-        if self.data.shape != expected:
-            raise ValueError(
-                f"Data shape {self.data.shape} does not match "
-                f"index dims {expected}."
-            )
-
-    # ------------------------------------------------------------------
-    # Materialization
-    # ------------------------------------------------------------------
-
-    def materialize_zeros(
-        self,
-        dtype: np.dtype = np.complex128,
-    ) -> None:
-        """Fill with zeros (in-place)."""
-        self.data = np.zeros(self.shape, dtype=dtype)
-
-    def materialize_random(
-        self,
-        seed: Optional[int] = None,
-        dtype: np.dtype = np.complex128,
-    ) -> None:
-        """Fill with random normal data (in-place)."""
-        rng = np.random.default_rng(seed)
-        self.data = rng.standard_normal(self.shape).astype(dtype)
-        if np.issubdtype(dtype, np.complexfloating):
-            self.data = self.data + 1j * rng.standard_normal(self.shape).astype(dtype)
-
-    # ------------------------------------------------------------------
-    # Arithmetic / norms
-    # ------------------------------------------------------------------
-
-    def norm(self) -> float:
-        """Frobenius norm of the underlying array."""
-        if self.data is None:
-            raise RuntimeError("Tensor is not materialized.")
-        return float(np.linalg.norm(self.data))
-
-    def normalize(self) -> float:
-        """Normalize the tensor in-place; returns the old norm."""
-        n = self.norm()
-        if n == 0:
-            raise ValueError("Cannot normalize a zero tensor.")
-        self.data = self.data / n
-        return n
-
-    def __mul__(self, scalar) -> "Tensor":
-        if self.data is None:
-            raise RuntimeError("Tensor is not materialized.")
-        return Tensor(self.data * scalar, list(self.indices), name=self.name)
-
-    def __rmul__(self, scalar) -> "Tensor":
-        return self.__mul__(scalar)
-
-    def __add__(self, other: "Tensor") -> "Tensor":
-        if self.data is None or other.data is None:
-            raise RuntimeError("Both tensors must be materialized for addition.")
-        if self.shape != other.shape:
-            raise ValueError(f"Shape mismatch: {self.shape} vs {other.shape}")
-        return Tensor(self.data + other.data, list(self.indices), name=self.name)
-
-    # ------------------------------------------------------------------
-    # Contraction
-    # ------------------------------------------------------------------
-
-    def contract(self, other: "Tensor") -> "Tensor":
+    def copy(self) -> "Tensor":
         """
-        Contract *self* with *other* over all shared indices.
+        Create a deep copy of the tensor.
 
-        Shared indices are identified by object identity (same ``Index`` instance).
-        The output tensor contains all non-shared indices, in the order
-        (self_free_indices, other_free_indices).
-        """
-        if self.data is None or other.data is None:
-            raise RuntimeError("Both tensors must be materialized to contract.")
-
-        self_shared  = [i for i, ix in enumerate(self.indices)  if ix in other.indices]
-        other_shared = [other.indices.index(self.indices[s]) for s in self_shared]
-
-        self_free  = [i for i in range(self.rank)  if i not in self_shared]
-        other_free = [i for i in range(other.rank) if i not in other_shared]
-
-        result_data = np.tensordot(self.data, other.data, axes=(self_shared, other_shared))
-
-        result_indices = (
-            [self.indices[i]  for i in self_free] +
-            [other.indices[i] for i in other_free]
-        )
-
-        return Tensor(result_data, result_indices)
-
-    # ------------------------------------------------------------------
-    # SVD
-    # ------------------------------------------------------------------
-
-    def svd_decomposition(
-        self,
-        left_indices: List[Index],
-        *,
-        truncation: Optional[TruncationPolicy] = None,
-        absorb: str = "right",
-    ) -> Tuple["Tensor", np.ndarray, "Tensor", Index]:
-        """
-        SVD of this tensor, splitting axes into left and right groups.
-
-        Parameters
-        ----------
-        left_indices :
-            The subset of ``self.indices`` that form the *left* (U) tensor.
-            The remaining indices form the *right* (Vh) tensor.
-        truncation :
-            Optional truncation policy.  If ``None``, keep all singular values.
-        absorb :
-            Where to absorb the singular values: ``"right"`` (default),
-            ``"left"``, or ``"sqrt"`` (split symmetrically).
-
-        Returns
-        -------
-        U : Tensor
-            Left unitary, indices = left_indices + [new_bond].
-        S : np.ndarray
-            1-D array of (kept) singular values.
-        Vh : Tensor
-            Right tensor, indices = [new_bond] + right_indices.
-        bond : Index
-            The new shared bond Index.
+        Note: by default we preserve indices (do not sim()) so shared connectivity
+        inside a tensor network can be preserved when copying the network.
         """
         if self.data is None:
-            raise RuntimeError("Tensor is not materialized.")
+            return Tensor(None, indices=self.indices.copy())
+        return Tensor(self.data.copy(), indices=self.indices.copy())
 
-        # Determine right indices
-        right_indices = [ix for ix in self.indices if ix not in left_indices]
+    def conj(self) -> "Tensor":
+        self._require_data()
+        return Tensor(np.conj(self.data), indices=self.indices.copy())
 
-        # Transpose data so left axes come first
-        left_pos  = [self.indices.index(ix) for ix in left_indices]
-        right_pos = [self.indices.index(ix) for ix in right_indices]
-        perm = left_pos + right_pos
-        data = np.transpose(self.data, perm)
+    def contract(self, other: "Tensor", axes: Tuple[List[int], List[int]]) -> "Tensor":
+        """
+        Contract two tensors along specified axes.
 
-        rows = int(np.prod([self.indices[p].dim for p in left_pos]))
-        cols = int(np.prod([self.indices[p].dim for p in right_pos]))
-        mat  = data.reshape(rows, cols)
+        Returns:
+            Contracted Tensor with remaining indices.
+        """
+        self._require_data()
+        other._require_data()
 
-        U_mat, S, Vh_mat = np.linalg.svd(mat, full_matrices=False)
+        result_data = np.tensordot(self.data, other.data, axes=axes)
 
-        # Truncate
-        if truncation is not None:
-            k = truncation.choose_bond_dim(S)
-            U_mat, S, Vh_mat = U_mat[:, :k], S[:k], Vh_mat[:k, :]
+        self_remaining = [i for i in range(self.ndim) if i not in axes[0]]
+        other_remaining = [i for i in range(other.ndim) if i not in axes[1]]
+
+        result_inds = [self.indices[i] for i in self_remaining] + [other.indices[i] for i in other_remaining]
+        return Tensor(result_data, indices=result_inds)
+
+    def reshape(self, new_shape: Tuple[int, ...]) -> "Tensor":
+        self._require_data()
+
+        new_data = self.data.reshape(new_shape)
+        new_inds = [Index(dim=d, name=f"reshaped_{i}") for i, d in enumerate(new_shape)]
+        return Tensor(new_data, indices=new_inds)
+
+    def transpose(self, axes: Optional[Tuple[int, ...]] = None) -> "Tensor":
+        self._require_data()
+
+        new_data = np.transpose(self.data, axes)
+        if axes is None:
+            new_inds = list(reversed(self.indices))
         else:
-            k = len(S)
+            new_inds = [self.indices[i] for i in axes]
+        return Tensor(new_data, indices=new_inds)
 
-        # New shared bond index
-        bond = Index(dim=k, name=f"{self.name}_svd_bond", tags=frozenset({"svd_bond"}))
+    def permute_by_inds(self, target_inds: List[Index]) -> "Tensor":
+        self._require_data()
 
-        # Absorb singular values
-        if absorb == "right":
-            U_data  = U_mat
-            Vh_data = np.diag(S) @ Vh_mat
-        elif absorb == "left":
-            U_data  = U_mat * S[np.newaxis, :]
-            Vh_data = Vh_mat
-        elif absorb == "sqrt":
-            sqS     = np.sqrt(S)
-            U_data  = U_mat * sqS[np.newaxis, :]
-            Vh_data = np.diag(sqS) @ Vh_mat
-        else:
-            raise ValueError(f"Unknown absorb mode: {absorb!r}")
+        assert len(target_inds) == self.ndim, "Target indices must match tensor rank."
 
-        # Reshape back
-        left_shape  = [self.indices[p].dim for p in left_pos]  + [k]
-        right_shape = [k] + [self.indices[p].dim for p in right_pos]
+        perm = []
+        used = set()
+        for target_ind in target_inds:
+            found = False
+            for j, self_ind in enumerate(self.indices):
+                if j not in used and self_ind == target_ind:
+                    perm.append(j)
+                    used.add(j)
+                    found = True
+                    break
+            if not found:
+                raise ValueError(f"Could not find index {target_ind} in tensor indices {self.indices}")
 
-        U_tensor  = Tensor(U_data.reshape(left_shape),   left_indices  + [bond])
-        Vh_tensor = Tensor(Vh_data.reshape(right_shape), [bond] + right_indices)
+        permuted_data = np.transpose(self.data, perm)
+        permuted_inds = [self.indices[i] for i in perm]
+        return Tensor(permuted_data, indices=permuted_inds)
 
-        return U_tensor, S, Vh_tensor, bond
+    # ----------------------------
+    # Factorizations
+    # ----------------------------
 
+    def qr_decomposition(self, left_indices: List[int], right_indices: List[int]) -> Tuple["Tensor", "Tensor"]:
+        self._require_data()
+
+        all_indices = set(left_indices + right_indices)
+        assert all_indices == set(range(self.ndim))
+
+        perm = left_indices + right_indices
+        data_perm = np.transpose(self.data, perm)
+
+        left_dim = int(np.prod([self.shape[i] for i in left_indices]))
+        right_dim = int(np.prod([self.shape[i] for i in right_indices]))
+
+        mat = data_perm.reshape(left_dim, right_dim)
+        Q, R = qr(mat, mode="full")
+
+        chi = Q.shape[1]
+
+        bond_ind = Index(dim=chi, name="QR_bond", tags=frozenset({"QR"}))
+
+        left_shape = tuple([self.shape[i] for i in left_indices]) + (chi,)
+        right_shape = (chi,) + tuple([self.shape[i] for i in right_indices])
+
+        Q_inds = [self.indices[i] for i in left_indices] + [bond_ind]
+        R_inds = [bond_ind] + [self.indices[i] for i in right_indices]
+
+        Q_tensor = Tensor(Q.reshape(left_shape), indices=Q_inds)
+        R_tensor = Tensor(R.reshape(right_shape), indices=R_inds)
+        return Q_tensor, R_tensor
+
+    def svd_decomposition(self, left_indices: List[int], right_indices: List[int]) -> Tuple["Tensor", "Tensor", "Tensor"]:
+        self._require_data()
+
+        all_indices = set(left_indices + right_indices)
+        assert all_indices == set(range(self.ndim)), "All indices must be specified."
+
+        perm = left_indices + right_indices
+        data_perm = np.transpose(self.data, perm)
+
+        left_dim = int(np.prod([self.shape[i] for i in left_indices]))
+        right_dim = int(np.prod([self.shape[i] for i in right_indices]))
+
+        mat = data_perm.reshape(left_dim, right_dim)
+        U, S, Vh = svd(mat, full_matrices=False, lapack_driver="gesdd")
+
+        chi = len(S)
+
+        bond_ind = Index(dim=chi, name="SVD_bond", tags=frozenset({"SVD"}))
+
+        left_shape = tuple([self.shape[i] for i in left_indices]) + (chi,)
+        right_shape = (chi,) + tuple([self.shape[i] for i in right_indices])
+
+        U_inds = [self.indices[i] for i in left_indices] + [bond_ind]
+        S_inds = [bond_ind]
+        Vh_inds = [bond_ind] + [self.indices[i] for i in right_indices]
+
+        U_reshaped = Tensor(U.reshape(left_shape), indices=U_inds)
+        V_reshaped = Tensor(Vh.reshape(right_shape), indices=Vh_inds)
+        S_tensor = Tensor(S.reshape((chi,)), indices=S_inds)
+
+        return U_reshaped, S_tensor, V_reshaped
 
     def svd(
         self,
-        left_indices: List[Index],
-        *,
-        truncation: Optional[TruncationPolicy] = None,
-        absorb: str = "right",
-    ) -> Tuple["Tensor", np.ndarray, "Tensor", Index]:
-        """Alias for :meth:`svd_decomposition`."""
-        return self.svd_decomposition(
-            left_indices, truncation=truncation, absorb=absorb
-        )
+        left_indices: List[int],
+        right_indices: List[int],
+        policy: Optional[TruncationPolicy] = None,
+    ) -> Tuple["Tensor", "Tensor", "Tensor"]:
+        self._require_data()
 
-    # ------------------------------------------------------------------
-    # Utility
-    # ------------------------------------------------------------------
+        U, S, Vt = self.svd_decomposition(left_indices, right_indices)
 
-    def copy(self) -> "Tensor":
-        """Deep copy."""
-        new_data = self.data.copy() if self.data is not None else None
-        return Tensor(new_data, list(self.indices), name=self.name)
+        if policy is None:
+            return U, S, Vt
 
-    def __repr__(self) -> str:
-        shape = self.shape
-        mat   = "yes" if self.data is not None else "no"
-        return f"Tensor(shape={shape}, materialized={mat}, name={self.name!r})"
+        s_vals = np.asarray(S.data, dtype=float)
+        chi = policy.choose_bond_dim(s_vals)
+
+        # Keep the same bond identity (id) and metadata, only change dim.
+        old_bond = U.indices[-1]
+        new_bond = Index(dim=chi, name=old_bond.name, tags=old_bond.tags, prime=old_bond.prime, id=old_bond.id)
+
+        U_trunc = Tensor(U.data[..., :chi], indices=U.indices[:-1] + [new_bond])
+        S_trunc = Tensor(S.data[:chi], indices=[new_bond])
+        V_trunc = Tensor(Vt.data[:chi, ...], indices=[new_bond] + Vt.indices[1:])
+
+        return U_trunc, S_trunc, V_trunc
+
+    # ----------------------------
+    # Norm utilities
+    # ----------------------------
+
+    def norm(self) -> float:
+        self._require_data()
+        return float(np.linalg.norm(self.data))
+
+    def normalize(self) -> "Tensor":
+        self._require_data()
+
+        n = self.norm()
+        if n == 0.0:
+            raise ValueError("Cannot normalize a zero-norm tensor.")
+        return Tensor(self.data / n, indices=self.indices.copy())
+
+    # ----------------------------
+    # Convenience
+    # ----------------------------
+
+    def einsum(self, subscripts: str, *others: "Tensor") -> "Tensor":
+        self._require_data()
+        for t in others:
+            t._require_data()
+
+        arrays = [self.data] + [t.data for t in others]
+        out = np.einsum(subscripts, *arrays)
+
+        # If you want index-aware einsum later, this is where it would go.
+        return Tensor(out)

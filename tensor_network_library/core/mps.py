@@ -308,277 +308,129 @@ class MPS:
 
         vec = np.asarray(psi, dtype = dtype).reshape(-1)
         if vec.ndim != 1:
-            raise ValueError("psi must be a 1-D array.")
+            raise ValueError("Psi must be a 1D statevector")
+        if vec.size == 0:
+            raise ValueError("psi must be non-empty")
+        
+        n = np.linalg.norm(vec)
+        if n == 0:
+            raise ValueError("psi must be nonzero")
+        if normalize:
+            vec = vec / n
 
-        # Normalise physical dims
+        # Resolve physical dimension
         if isinstance(physical_dims, int):
-            d = physical_dims
-            L = int(round(np.log(vec.size) / np.log(d)))
-            if d ** L != vec.size:
-                raise ValueError(
-                    f"Statevector length {vec.size} is not a power of d={d}."
-                )
-            dims: List[int] = [d] * L
+            d = int(physical_dims)
+            if d <= 0:
+                raise ValueError("physical_dims must be positive")
+
+            n = vec.shape[0]
+            L = 0
+            tmp = n
+            while tmp > 1 and (tmp % d == 0):
+                tmp //= d
+                L += 1
+            if d**L != n:
+                raise ValueError("len(psi) is not a power of physical_dims")
+            dims = [d] * L
         else:
             dims = [int(x) for x in physical_dims]
-            L = len(dims)
-            expected = 1
-            for x in dims: expected *= x
-            if expected != vec.size:
+            if any(x <= 0 for x in dims):
+                raise ValueError("All physical dimensions must be positive")
+            n = int(np.prod(dims))
+            if vec.shape[0] != n:
+                raise ValueError("len(psi) does not match product of physical_dims")
+            
+        L = len(dims)
+
+        if L <= 0:
+            raise ValueError("Cannot build an MPS with L = 0")
+
+        absorb = str(absorb).lower()
+        if absorb not in {"right", "left", "sqrt"}:
+            raise ValueError("absorb must be one of {'right', 'left', 'sqrt'}")
+        
+        def choose_chi(S: np.ndarray) -> int:
+            chi_full = int(S.shape[0])
+            if truncation is None:
+                return chi_full
+            chi = int(truncation.choose_bond_dim(S))
+            if chi <= 0:
                 raise ValueError(
-                    f"Product of physical_dims {dims} = {expected} != {vec.size}."
+                    "TruncationPolicy chose chi=0 (cutoff too large or state near-zero on this cut)."
                 )
+            return min(chi, chi_full)
+        
 
-        # Build structure (bond dims will be overwritten)
-        mps = cls(L=L, physical_dims=dims, bond_policy="default",
-                  truncation=truncation, name=name, dtype=dtype)
+        # Build indices
+        phys_ix = [Index(dim=dims[i], name=f"{name}_phys_{i}", tags=frozenset({"phys", f"i={i}"})) for i in range(L)]
+        bonds = [Index(dim=1, name=f"{name}_bond_0", tags=frozenset({"bond", "b=0"}))]
 
-        # Successive SVD sweep left -> right
-        M = vec.copy().reshape([1] + dims)   # shape: (1, d0, d1, ..., d_{L-1})
+        tensors: List[Tensor] = []
+        rem = vec
         chi_left = 1
 
-        tensors_data: list[np.ndarray] = []
-
         for i in range(L - 1):
-            d_i = dims[i]
-            M   = M.reshape(chi_left * d_i, -1)     # merge left bond + phys
+            di = dims[i]
+            rem = rem.reshape(chi_left * di, -1)
 
-            U, S, Vh = np.linalg.svd(M, full_matrices=False)
+            U, S, Vh = np.linalg.svd(rem, full_matrices=False)
 
-            # Truncate
-            if truncation is not None:
-                k = truncation.choose_bond_dim(S)
-                U, S, Vh = U[:, :k], S[:k], Vh[:k, :]
-            else:
-                k = len(S)
+            chi = choose_chi(S)
+            U = U[:, :chi]
+            S = S[:chi]
+            Vh = Vh[:chi, :]
 
-            chi_right = k
+            bond = Index(dim=chi, name=f"{name}_bond_{i+1}", tags=frozenset({"bond", f"b={i+1}"}))
+            bonds.append(bond)
 
-            # Absorb singular values
             if absorb == "right":
-                tensors_data.append(U.reshape(chi_left, d_i, chi_right))
-                M = (np.diag(S) @ Vh)
+                A = U.reshape(chi_left, di, chi)
+                rem = (S[:, None] * Vh)              # diag(S) @ Vh
             elif absorb == "left":
-                tensors_data.append((U * S[np.newaxis, :]).reshape(chi_left, d_i, chi_right))
-                M = Vh
-            elif absorb == "sqrt":
-                sqS = np.sqrt(S)
-                tensors_data.append((U * sqS[np.newaxis, :]).reshape(chi_left, d_i, chi_right))
-                M = (np.diag(sqS) @ Vh)
-            else:
-                raise ValueError(f"Unknown absorb mode: {absorb!r}")
+                A = (U * S[None, :]).reshape(chi_left, di, chi)  # U @ diag(S)
+                rem = Vh
+            else:  # "sqrt"
+                s = np.sqrt(S)
+                A = (U * s[None, :]).reshape(chi_left, di, chi)
+                rem = (s[:, None] * Vh)
 
-            chi_left = chi_right
+            tensors.append(Tensor(A.astype(dtype, copy=False), indices=[bonds[i], phys_ix[i], bond]))
+            chi_left = chi
 
         # Last site
-        tensors_data.append(M.reshape(chi_left, dims[-1], 1))
+        last_d = dims[-1]
+        rem = rem.reshape(chi_left, last_d)
+        bonds.append(Index(dim=1, name=f"{name}_bond_{L}", tags=frozenset({"bond", f"b={L}"})))
 
-        # Build Index objects consistent with chosen bond dims
-        bond_dims = [td.shape[0] for td in tensors_data] + [1]
-        phys_indices = [
-            Index(dim=dims[i], name=f"{name}_phys_{i}", tags=frozenset({"phys", f"i={i}"}))
-            for i in range(L)
-        ]
-        bond_indices = [
-            Index(dim=bond_dims[i], name=f"{name}_bond_{i}", tags=frozenset({"bond", f"b={i}"}))
-            for i in range(L + 1)
-        ]
-
-        site_tensors = [
-            Tensor(
-                tensors_data[i],
-                indices=[bond_indices[i], phys_indices[i], bond_indices[i + 1]],
-            )
-            for i in range(L)
-        ]
-
-        result = cls.from_tensors(site_tensors, name=name)
-
-        if normalize:
-            result.normalize()
-
-        return result
-
-
-    # -------------------------
-    # Properties
-    # -------------------------
-
-    @property
-    def physical_dims(self) -> List[int]:
-        """List of physical dimensions."""
-        return list(self._physical_dims)
-
-    @property
-    def bond_dims(self) -> List[int]:
-        """List of bond dimensions (length L+1, boundaries typically 1)."""
-        return list(self._bond_dims)
-
-
-    # -------------------------
-    # Materialization
-    # -------------------------
-
-    def _assert_materialized(self, site: int | None = None) -> None:
-        """
-        Raise RuntimeError if any (or a specific) site tensor has data=None.
-        """
-        if site is not None:
-            if self.tensors[site].data is None:
-                raise RuntimeError(f"Site {site} tensor is not materialized.")
-        else:
-            for i, t in enumerate(self.tensors):
-                if t.data is None:
-                    raise RuntimeError(f"Site {i} tensor is not materialized.")
-
-
-    def materialize_zeros(self, dtype: np.dtype | None = None) -> None:
-        """Fill all tensors with zeros (in-place)."""
-        dt = dtype or self.dtype
-        for t in self.tensors:
-            t.materialize_zeros(dtype=dt)
-
-
-    def materialize_random(self,
-                           seed: int | None = None,
-                           dtype: np.dtype | None = None) -> None:
-        """Fill all tensors with random data, then normalize."""
-        rng = np.random.default_rng(seed)
-        dt  = dtype or self.dtype
-        for t in self.tensors:
-            shape = tuple(ix.dim for ix in t.indices)
-            data  = rng.standard_normal(shape).astype(dt)
-            if np.issubdtype(dt, np.complexfloating):
-                data = data + 1j * rng.standard_normal(shape).astype(dt)
-            t.data = data
-        self.normalize()
-
-
-    # -------------------------
-    # Product states
-    # -------------------------
-
-    def product_state(self, state_indices: List[int]) -> None:
-        """
-        In-place: set this MPS to a product state |s0 s1 ... s_{L-1}>.
-
-        Requires bond dims == 1 everywhere (chi=1 product state MPS).
-        Materializes tensors with zeros then sets the correct entry to 1.
-        """
-        if any(bd != 1 for bd in self._bond_dims):
-            raise ValueError("product_state() requires all bond dims == 1.")
-        if len(state_indices) != self.L:
-            raise ValueError(f"state_indices has length {len(state_indices)}, expected {self.L}.")
-
-        for i, s in enumerate(state_indices):
-            s = int(s)
-            if not (0 <= s < self._physical_dims[i]):
-                raise ValueError(f"Invalid state index {s} at site {i}")
-            self.tensors[i].materialize_zeros()
-            self.tensors[i].data[0, s, 0] = 1.0
-
-
-    # -------------------------
-    # Norm and normalization
-    # -------------------------
-
-    def norm(self) -> float:
-        """
-        Compute <psi|psi> via sequential contraction (left to right).
-
-        Complexity: O(L * chi^2 * d).
-        """
-        self._assert_materialized()
-        transfer = np.ones((1, 1), dtype=self.dtype)
-
-        for t in self.tensors:
-            A = t.data   # shape (chi_l, d, chi_r)
-            # transfer_{a,b} = sum_{s,a',b'} transfer_{a',b'} * A_{a',s,chi_r_old} * conj(A)_{b',s,...}
-            # Standard left contraction:
-            # transfer' = einsum('ab, ais, bis -> ij', transfer, A, A.conj())
-            tmp = np.tensordot(transfer, A, axes=([0], [0]))       # (b, d, chi_r)
-            transfer = np.tensordot(tmp, A.conj(), axes=([0, 1], [0, 1]))  # (chi_r, chi_r)
-
-        return float(np.sqrt(np.abs(transfer[0, 0])))
-
-
-    def normalize(self) -> float:
-        """
-        Normalize the MPS in-place. Returns the previous norm.
-        """
-        self._assert_materialized()
-        n = self.norm()
-        if n == 0:
-            raise ValueError("Cannot normalize a zero-norm MPS.")
-        # Distribute 1/n into the last site tensor
-        self.tensors[-1].data = self.tensors[-1].data / n
-        return n
-
-
-    # -------------------------
-    # Measurement helpers
-    # -------------------------
-
-    def overlap(self, other: "MPS") -> complex:
-        """
-        Compute <self|other> via sequential contraction.
-        """
-        self._assert_materialized()
-        other._assert_materialized()
-
-        transfer = np.ones((1, 1), dtype=self.dtype)
-
-        for A, B in zip(self.tensors, other.tensors):
-            a = A.data
-            b = B.data
-            tmp = np.tensordot(transfer, a.conj(), axes=([0], [0]))  # (chi_r_A, d, chi_r_B)
-            transfer = np.tensordot(tmp, b, axes=([0, 1], [0, 1]))   # wrong — fix:
-            # Correct contraction:
-            # Let's redo properly
-            transfer = np.einsum('ab,ais,bis->ij', transfer, a.conj(), b)
-
-        return complex(transfer[0, 0])
-
-
-    # -------------------------
-    # Utility
-    # -------------------------
-
-    def copy(self) -> "MPS":
-        """Deep copy."""
-        new_tensors = [t.copy() for t in self.tensors]
-        return MPS.from_tensors(new_tensors, name=self.name)
-
-
-    def __len__(self) -> int:
-        return self.L
-
-
-    def __repr__(self) -> str:
-        bd = self._bond_dims
-        pd = self._physical_dims
-        materialized = all(t.data is not None for t in self.tensors)
-        return (
-            f"MPS(name={self.name!r}, L={self.L}, "
-            f"physical_dims={pd}, max_bond={max(bd)}, "
-            f"materialized={materialized})"
+        A_last = rem.reshape(chi_left, last_d, 1)
+        tensors.append(
+            Tensor(A_last.astype(dtype, copy=False), indices=[bonds[L - 1], phys_ix[L - 1], bonds[L]])
         )
 
+        mps = cls.from_tensors(tensors=tensors, name=name)
+        if normalize:
+            mps.normalize()
+        return mps
+            
 
     # -------------------------
-    # Private helpers
+    # Internal helpers
     # -------------------------
 
     def _parse_physical_dims(self, physical_dims: PhysDims) -> List[int]:
         if isinstance(physical_dims, int):
-            assert physical_dims >= 2, "Physical dimension must be >= 2"
-            return [physical_dims] * self.L
-        else:
-            dims = list(physical_dims)
-            assert len(dims) == self.L, (
-                f"physical_dims list must have length L={self.L}, got {len(dims)}"
-            )
-            return [int(d) for d in dims]
+            if physical_dims <= 0:
+                raise ValueError("physical_dims must be positive")
+            return [int(physical_dims)] * self.L
+
+        if len(physical_dims) != self.L:
+            raise AssertionError("physical_dims must have length L")
+
+        dims = [int(d) for d in physical_dims]
+        if any(d <= 0 for d in dims):
+            raise ValueError("All physical dimensions must be positive")
+        return dims
 
 
     def _resolve_bond_dims(
@@ -586,46 +438,155 @@ class MPS:
         bond_policy: BondPolicy,
         truncation: TruncationPolicy | None,
     ) -> List[int]:
-        """Compute the list of L+1 bond dims from the policy."""
-
-        chi_max = truncation.max_bond_dim if truncation is not None else None
-
+        # Explicit bond dims
         if isinstance(bond_policy, list):
-            bd = [int(x) for x in bond_policy]
-            assert len(bd) == self.L + 1, (
-                f"Explicit bond_policy list must have length L+1={self.L + 1}."
-            )
-            return bd
+            if len(bond_policy) != self.L + 1:
+                raise AssertionError("Explicit bond_policy list must have length L+1")
+            dims = [int(x) for x in bond_policy]
+            if any(d <= 0 for d in dims):
+                raise ValueError("Bond dimensions must be positive")
+            if dims[0] != 1 or dims[-1] != 1:
+                raise ValueError("Boundary bond dimensions must be 1")
+            return dims
+
+        # Helper: extract cap if present
+        chi_cap = truncation.max_bond_dim if truncation is not None else None
 
         if bond_policy == "uniform":
-            if chi_max is None:
-                raise ValueError('bond_policy="uniform" requires a TruncationPolicy with max_bond_dim.')
-            return [1] + [chi_max] * (self.L - 1) + [1]
+            if chi_cap is None:
+                raise ValueError("bond_policy='uniform' requires truncation.max_bond_dim to be set")
+            chi = int(chi_cap)
+            if chi <= 0:
+                raise ValueError("truncation.max_bond_dim must be positive for uniform bond policy")
+            if self.L == 1:
+                return [1, 1]
+            return [1] + [chi] * (self.L - 1) + [1]
 
-        # "default": chi_i = min(prod_{k<i} d_k, prod_{k>=i} d_k)
-        dims = self._physical_dims
-        left_prod  = [1] * (self.L + 1)
-        right_prod = [1] * (self.L + 1)
+        if bond_policy == "default":
+            # chi_i = min(prod left physical dims, prod right physical dims)
+            dims: List[int] = [1]
 
-        for i in range(1, self.L + 1):
-            left_prod[i] = left_prod[i - 1] * dims[i - 1]
-        for i in range(self.L - 1, -1, -1):
-            right_prod[i] = right_prod[i + 1] * dims[i]
+            left_prod = 1
+            right_prod = 1
+            for d in self._physical_dims:
+                right_prod *= d
 
-        bd = [min(left_prod[i], right_prod[i]) for i in range(self.L + 1)]
+            for d in self._physical_dims:
+                left_prod *= d
+                right_prod //= d
+                chi = min(left_prod, right_prod)
+                if chi_cap is not None:
+                    chi = min(int(chi), int(chi_cap))
+                dims.append(int(chi))
 
-        if chi_max is not None:
-            bd = [min(x, chi_max) for x in bd]
+            # dims has length L+1 and should end with 1
+            if dims[0] != 1 or dims[-1] != 1:
+                raise RuntimeError("Internal error: default bond dims should have boundary 1s")
+            return dims
 
-        return bd
+        raise ValueError(f"Unknown bond_policy: {bond_policy!r}")
 
 
     def _create_empty_tensors(self) -> None:
-        """Create site tensors with data=None."""
-        self.tensors = [
-            Tensor(
-                data=None,
-                indices=[self.bonds[i], self.indices[i], self.bonds[i + 1]],
-            )
-            for i in range(self.L)
-        ]
+        """Create site tensors with indices [bond_left, physical, bond_right] and data=None."""
+        self.tensors = []
+        for i in range(self.L):
+            inds = [self.bonds[i], self.indices[i], self.bonds[i + 1]]
+            self.tensors.append(Tensor(None, indices=inds))
+
+
+    def _assert_materialized(self) -> None:
+        for i, t in enumerate(self.tensors):
+            if t.data is None:
+                raise ValueError(f"MPS tensor at site {i} has data=None (unmaterialized MPS)")
+
+
+    # -------------------------
+    # Python protocol
+    # -------------------------
+
+    def __len__(self) -> int:
+        return self.L
+
+
+    def __repr__(self) -> str:
+        return f"MPS(L={self.L}, phys_dims={self.physical_dims}, bond_dims={self.bond_dims})"
+
+
+    # -------------------------
+    # Basic properties
+    # -------------------------
+
+    @property
+    def bond_dims(self) -> List[int]:
+        """Bond dimensions between sites (including boundaries), length L+1."""
+        return [b.dim for b in self.bonds]
+
+
+    @property
+    def physical_dims(self) -> List[int]:
+        """Physical dimension at each site, length L."""
+        return [p.dim for p in self.indices]
+
+
+    # -------------------------
+    # Core linear-algebra helpers
+    # -------------------------
+
+    def norm(self) -> float:
+        """
+        Compute the norm of the MPS as sqrt(<psi|psi>).
+
+        Algorithm:
+            Contract the MPS with its conjugate from left to right.
+        """
+        self._assert_materialized()
+
+        overlap = np.eye(self.bond_dims[0], dtype=np.complex128)
+
+        for tensor in self.tensors:
+            temp = np.tensordot(overlap, tensor.data, axes=([0], [0]))
+            temp = np.tensordot(temp, tensor.conj().data, axes=([0, 1], [0, 1]))
+            overlap = temp
+
+        return float(np.sqrt(np.abs(np.trace(overlap))))
+
+
+    def normalize(self) -> "MPS":
+        """
+        Normalize the MPS in-place so that <psi|psi> = 1.
+
+        Returns:
+            self for chaining.
+        """
+        self._assert_materialized()
+
+        nrm = self.norm()
+        if nrm > 0:
+            self.tensors[0] = self.tensors[0] * (1.0 / nrm)
+        return self
+
+
+    def to_dense(self) -> np.ndarray:
+        """
+        Convert the MPS to a full statevector |Psi> as a 1D array of length prod_i d_i.
+
+        Intended for small systems and for checks/debugging.
+        """
+        self._assert_materialized()
+
+        psi = self.tensors[0].data  # (chiL, d0, chiR)
+
+        for t in self.tensors[1:]:
+            psi = np.tensordot(psi, t.data, axes=([psi.ndim - 1], [0]))
+
+        psi = np.squeeze(psi)
+        return psi.reshape(-1)
+
+    # -------------------------
+    # External Helpers
+    # -------------------------
+
+    def copy(self) -> "MPS":
+        """Creates a deep copy of the MPS."""
+        return MPS.from_tensors(self.tensors, name=self.name)
