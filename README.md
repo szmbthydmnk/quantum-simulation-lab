@@ -201,5 +201,5 @@ See [`ROADMAP.md`](./ROADMAP.md) for detailed per-version task lists and [`DIARY
 _Last updated automatically by CI:_
 
 <!-- LOC-AUTO-START -->
-7625
+7638
 <!-- LOC-AUTO-END -->
