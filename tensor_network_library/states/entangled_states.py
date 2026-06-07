@@ -1,3 +1,8 @@
+# tensor_network_library/states/entangled_states.py
+"""
+Helpers to build common entangled states, e.g. Bell pairs, GHZ states, W states, etc.
+""" 
+
 from __future__ import annotations
 
 from typing import Tuple

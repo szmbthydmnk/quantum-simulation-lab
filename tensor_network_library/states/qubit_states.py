@@ -1,4 +1,7 @@
-#
+# tensor_network_library/states/qubit_states.py
+"""
+This function helps to build qubit states from common labels, e.g. "0", "1", "+", "-", "H+", "H-", "T3", "phi=pi/4", etc.
+"""
 
 from __future__ import annotations
 
