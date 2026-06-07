@@ -1,3 +1,4 @@
+# tensor_network_library/hamiltonian/models.py
 """
 Hamiltonian MPO builders for standard 1D quantum lattice models.
 

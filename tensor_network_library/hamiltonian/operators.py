@@ -1,3 +1,4 @@
+# tensor_network_library/hamiltonian/operators.py
 """
 Single-site and two-site operator primitives.
 
