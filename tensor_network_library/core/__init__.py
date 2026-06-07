@@ -1,3 +1,4 @@
+# tensor_network_library/core/__init__.py
 """Tensor network library core components."""
 
 from .index import Index

@@ -1,3 +1,4 @@
+# tensor_network_library/core/canonical.py
 """Canonical form transformations for MPS.
 
 Provides left-, right-, and mixed-canonicalization routines.

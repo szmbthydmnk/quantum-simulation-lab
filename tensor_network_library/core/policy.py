@@ -1,3 +1,8 @@
+# tensor_network_library/core/policy.py
+"""
+Truncation policy for deciding how many singular values to keep during SVD-based truncations in MPS algorithms. This is a simple dataclass that encapsulates the logic for choosing bond dimensions based on a cutoff and/or maximum bond dimension, with an option for strict enforcement.
+""" 
+
 from dataclasses import dataclass, field
 from typing import Optional
 import numpy as np

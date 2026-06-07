@@ -1,3 +1,9 @@
+# tensor_network_library/core/gates.py
+"""
+Helper functions to apply gates to MPS, e.g. apply_two_site_gate for TEBD
+updates, and more general gate application patterns in the future.
+"""
+
 from __future__ import annotations
 
 from typing import Literal

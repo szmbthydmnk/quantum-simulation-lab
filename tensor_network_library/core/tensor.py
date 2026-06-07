@@ -1,3 +1,8 @@
+# tensor_network_library/core/tensor.py
+"""
+Tensor class with support for materialized and unmaterialized tensors, basic tensor operations (contract, reshape, transpose), and factorizations (QR, SVD) with optional truncation policies.
+"""
+
 from __future__ import annotations  # Postpone evaluation of type hints
 
 from typing import Tuple, Optional, List

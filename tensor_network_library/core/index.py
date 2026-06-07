@@ -1,3 +1,4 @@
+# tensor_network_library/core/index.py
 """
 Index objects for tensor network indices for the connectivity of thensors.
 

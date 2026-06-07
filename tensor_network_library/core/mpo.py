@@ -1,3 +1,4 @@
+# tensor_network_library/core/mpo.py
 """
 Matrix Product Operator (MPO) implementation.
 

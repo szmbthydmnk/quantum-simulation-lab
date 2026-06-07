@@ -1,3 +1,4 @@
+# tensor_network_library/core/mps.py
 """Matrix Product State (MPS) implementation."""
 
 from __future__ import annotations
