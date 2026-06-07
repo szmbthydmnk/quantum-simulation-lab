@@ -340,6 +340,143 @@ def random_field_mpo(
 
 
 # ---------------------------------------------------------------------------
+# Hubbard Model
+# ---------------------------------------------------------------------------
+
+def hubbard_mpo(
+    L: int,
+    t: float = 1.0,
+    U: float = 1.0,
+    mu: float = 0.0,
+    dtype: np.dtype = np.complex128,
+) -> MPO:
+    """
+    MPO for the 1D Hubbard model::
+
+        H = -t Σ_i Σ_σ ( c†_{i,σ} c_{i+1,σ} + h.c. )
+          + U Σ_i n_{i,↑} n_{i,↓}
+          - mu Σ_i ( n_{i,↑} + n_{i,↓} )
+
+    Local basis per site (d=4): |0⟩, |↑⟩, |↓⟩, |↑↓⟩
+    ordered as |vac⟩=0, |↑⟩=1, |↓⟩=2, |↑↓⟩=3.
+
+    Jordan-Wigner strings are absorbed into the MPO W-tensors so that
+    the MPO correctly represents the fermionic Hamiltonian.
+
+    Bond dimension: chi = 6 for all internal bonds.
+    FSM auxiliary states:
+        0: done  (right boundary / accumulation complete)
+        1: c†_↑ dangling  (waiting for c_↑ on right)
+        2: c_↑  dangling  (waiting for c†_↑ on right)
+        3: c†_↓ dangling  (waiting for c_↓ on right)
+        4: c_↓  dangling  (waiting for c†_↓ on right)
+        5: identity pass-through (left boundary)
+
+    Args:
+        L:    Chain length (must be >= 2).
+        t:    Nearest-neighbour hopping amplitude (positive = standard).
+        U:    On-site Coulomb repulsion.
+        mu:   Chemical potential (positive mu fills the chain).
+        dtype: Tensor dtype.
+
+    Returns:
+        MPO representing the Hubbard Hamiltonian.
+    """
+    if L < 2:
+        raise ValueError(f"Hubbard MPO requires L >= 2, got L={L}")
+
+    d = 4  # local Hilbert space: |0>, |up>, |dn>, |up,dn>
+
+    # --- local operators in the 4-dimensional Fock space ---
+    # basis ordering: 0=|vac>, 1=|up>, 2=|dn>, 3=|up,dn>
+
+    I4 = np.eye(d, dtype=dtype)
+
+    # number operators
+    n_up = np.zeros((d, d), dtype=dtype)
+    n_up[1, 1] = 1.0
+    n_up[3, 3] = 1.0
+
+    n_dn = np.zeros((d, d), dtype=dtype)
+    n_dn[2, 2] = 1.0
+    n_dn[3, 3] = 1.0
+
+    # creation / annihilation for spin-up (with JW string = (-1)^{n_up} = I here,
+    # since up is the first species and no species precedes it)
+    c_up = np.zeros((d, d), dtype=dtype)   # c_up |up> = |vac>, c_up |up,dn> = |dn>
+    c_up[0, 1] = 1.0
+    c_up[2, 3] = 1.0
+
+    cd_up = c_up.T.conj().copy()           # c†_up
+
+    # JW string F = (-1)^{n_up}  needed between spin-up operators on different sites
+    F_up = np.diag(np.array([1.0, -1.0, 1.0, -1.0], dtype=dtype))
+
+    # creation / annihilation for spin-down (JW string includes n_up parity)
+    c_dn = np.zeros((d, d), dtype=dtype)   # c_dn |dn> = |vac>, c_dn |up,dn> = -|up>
+    c_dn[0, 2] = 1.0
+    c_dn[1, 3] = -1.0   # anti-commutation: c_dn |up,dn> = -|up>  (up comes first)
+
+    cd_dn = c_dn.T.conj().copy()           # c†_dn
+
+    # JW string for spin-down includes both up and down parity
+    F_dn = np.diag(np.array([1.0, -1.0, -1.0, 1.0], dtype=dtype))
+    F    = F_up @ F_dn   # full JW string F = (-1)^{n_up + n_dn}
+
+    # on-site interaction and chemical potential
+    n_up_n_dn = n_up @ n_dn              # = |up,dn><up,dn|
+    n_tot     = n_up + n_dn
+
+    chi = 6
+    bond_dims = [1] + [chi] * (L - 1) + [1]
+    mpo = MPO(L=L, d=d, bond_policy=bond_dims, dtype=dtype)
+
+    for i in range(L):
+        dl = bond_dims[i]
+        dr = bond_dims[i + 1]
+        W  = np.zeros((dl, d, d, dr), dtype=dtype)
+
+        # local diagonal terms (on-site U and mu)
+        local = U * n_up_n_dn - mu * n_tot
+
+        if i == 0:
+            # shape (1, d, d, 6)
+            W[0, :, :, 5] = I4                  # pass identity right
+            W[0, :, :, 1] = -t * cd_up @ F      # start c†_up hopping (with JW)
+            W[0, :, :, 2] = -t * c_up  @ F      # start c_up  hopping (with JW)
+            W[0, :, :, 3] = -t * cd_dn @ F      # start c†_dn hopping (with JW)
+            W[0, :, :, 4] = -t * c_dn  @ F      # start c_dn  hopping (with JW)
+            W[0, :, :, 0] = local               # emit on-site terms
+
+        elif i == L - 1:
+            # shape (6, d, d, 1)
+            W[5, :, :, 0] = local               # on-site from pass-through
+            W[1, :, :, 0] = c_up                # close c†_up from left
+            W[2, :, :, 0] = cd_up               # close c_up  from left
+            W[3, :, :, 0] = c_dn                # close c†_dn from left
+            W[4, :, :, 0] = cd_dn               # close c_dn  from left
+            W[0, :, :, 0] = I4                  # identity from done state
+
+        else:
+            # shape (6, d, d, 6) — bulk
+            W[5, :, :, 5] = I4                  # pass identity
+            W[5, :, :, 1] = -t * cd_up @ F
+            W[5, :, :, 2] = -t * c_up  @ F
+            W[5, :, :, 3] = -t * cd_dn @ F
+            W[5, :, :, 4] = -t * c_dn  @ F
+            W[5, :, :, 0] = local
+            W[1, :, :, 0] = c_up
+            W[2, :, :, 0] = cd_up
+            W[3, :, :, 0] = c_dn
+            W[4, :, :, 0] = cd_dn
+            W[0, :, :, 0] = I4
+
+        mpo.tensors[i].data = W
+
+    return mpo
+
+
+# ---------------------------------------------------------------------------
 # Dense reference builders (for testing only)
 # ---------------------------------------------------------------------------
 
