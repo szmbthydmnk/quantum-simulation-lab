@@ -94,6 +94,10 @@ def tfim_mpo(
     return mpo
 
 
+# Public alias: ising_mpo → tfim_mpo
+ising_mpo = tfim_mpo
+
+
 # ---------------------------------------------------------------------------
 # Heisenberg Model
 # ---------------------------------------------------------------------------
@@ -518,4 +522,3 @@ def transverse_heisenberg_dense(
     for i in range(L):
         H -= h * embed_operator(sigma_x(dtype), site=i, L=L, d=2, dtype=dtype)
     return H
-    
