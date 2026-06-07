@@ -1,3 +1,8 @@
+# tensor_network_library/core/env.py
+"""
+Centralized configuration for a 1D quantum lattice system, including system size, local dimension, boundary conditions, truncation policies, and other parameters that algorithms can reference for consistency.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field

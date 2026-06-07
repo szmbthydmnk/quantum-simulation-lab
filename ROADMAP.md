@@ -42,10 +42,11 @@ Real and imaginary-time evolution on finite chains.
 - [x] Validated against dense simulations
 
 ---
+Future extensions beyond the current completed portfolio piece. Not actively developed, but left as potential exploration ideas.
 
-## 🔲 v2.1 — TDVP
+## 🔲 v3+ — TDVP
 
-Time-dependent variational principle for MPS time evolution.
+Potential future possibilities for the project, framed as exploratory ideas rather than current development goals. The repository is considered complete as a portfolio piece.
 
 - [ ] Single-site TDVP (1TDVP) on finite chains
 - [ ] Two-site TDVP (2TDVP) with adaptive bond dimension
@@ -54,9 +55,9 @@ Time-dependent variational principle for MPS time evolution.
 
 ---
 
-## 🔲 v3 — 2D Geometries & Long-Range Hamiltonians
+## 🔲 v4+ — 2D Geometries & Long-Range Hamiltonians
 
-2D lattice support via 1D mappings, and MPO compression for long-range interactions.
+Optional future extensions for 2D and long-range support, not part of the current portfolio scope.
 
 - [ ] 2D geometries mapped to 1D chains via swap networks
 - [ ] Swap gate layer for non-nearest-neighbour couplings
@@ -64,12 +65,3 @@ Time-dependent variational principle for MPS time evolution.
 - [ ] Support for heavy-hexagonal lattice geometries
 - [ ] Benchmark DMRG ground states on 2D Heisenberg and Hubbard models
 
----
-
-## 🔲 v4+ — Advanced Interfaces
-
-Exploratory extensions — scope to be defined.
-
-- [ ] Adiabatic quantum algorithm (AQA) interfaces using MPS/MPO
-- [ ] Parameterized gate hooks for quantum machine learning (QML)
-- [ ] QEC encoding/decoding maps as MPOs

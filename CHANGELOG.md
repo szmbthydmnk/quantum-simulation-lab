@@ -3,11 +3,6 @@
 All notable changes to `quantum-simulation-lab` are documented here.
 This project adheres to [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and [Semantic Versioning](https://semver.org/).
 
----
-
-## [Unreleased]
-
-_Changes that are merged to `main` but not yet tagged._
 
 ---
 
